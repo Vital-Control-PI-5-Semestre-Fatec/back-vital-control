@@ -1,5 +1,17 @@
 {
   "compilerOptions": {
+    "paths": {
+      "@users/*": [
+        "./src/users/*"
+      ],
+      "@remedios/*": [
+        "./src/remedios/*"
+      ]
+    },
+    "types": [
+      "node",
+      "jest"
+    ],
     "module": "nodenext",
     "moduleResolution": "nodenext",
     "resolvePackageJsonExports": true,
@@ -13,7 +25,6 @@
     "target": "ES2023",
     "sourceMap": true,
     "outDir": "./dist",
-    "baseUrl": "./",
     "incremental": true,
     "skipLibCheck": true,
     "strictNullChecks": true,
