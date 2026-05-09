@@ -1,8 +1,11 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { UserModule } from './users/user.module';
+import { FichasModule } from './fichas/fichas.module';
+import { HistoricoModule } from './historico/historico.module';
+import { RemediosModule } from './remedios/remedios.module';
 import { RotinaModule } from './rotina/rotina.module';
+import { UserModule } from './users/user.module';
 
 @Module({
   imports: [
@@ -16,15 +19,14 @@ import { RotinaModule } from './rotina/rotina.module';
         uri: configService.get<string>('DATABASE_URL'),
       }),
     }),
-    
-    // 2. Coloque seus módulos novos aqui para o NestJS ativar as rotas deles!
     UserModule,
     RotinaModule,
+    RemediosModule,
+    FichasModule,
+    HistoricoModule
   ],
-  
-  // 3. Deixamos as listas abaixo vazias, pois apagamos o AppController e o AppService
+
   controllers: [], 
   providers: [],   
-  
 })
 export class AppModule {}
