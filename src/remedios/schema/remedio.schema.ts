@@ -1,7 +1,7 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Document } from 'mongoose';
 
-@Schema({ collection: 'remedios' })
+@Schema({ collection: 'remedios', timestamps: true })
 export class Remedio extends Document {
   @Prop({ required: true })
   emailPaciente!: string;
@@ -14,6 +14,24 @@ export class Remedio extends Document {
 
   @Prop()
   estoqueAtual?: number;
+
+  @Prop()
+  codigoBarras?: string;
+
+  @Prop()
+  marca?: string;
+
+  @Prop()
+  imagemUrl?: string;
+
+  @Prop()
+  observacoes?: string;
+
+  @Prop({
+    enum: ['MANUAL', 'COSMOS', 'ANVISA', 'COSMOS_ANVISA'],
+    default: 'MANUAL',
+  })
+  fonteCadastro?: string;
 
   @Prop({ default: true })
   ativo!: boolean;
