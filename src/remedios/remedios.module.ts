@@ -5,7 +5,14 @@ import { RemediosController } from './remedios.controller';
 import { Remedio, RemedioSchema } from './schema/remedio.schema';
 
 @Module({
-  imports: [MongooseModule.forFeature([{ name: Remedio.name, schema: RemedioSchema }])],
+  imports: [
+    MongooseModule.forFeature([
+      {
+        name: Remedio.name,
+        schema: RemedioSchema,
+      },
+    ]),
+  ],
   controllers: [RemediosController],
   providers: [RemediosService],
 })
