@@ -1,4 +1,12 @@
-import { Controller, Get, Post, Body, Patch, Param, Delete } from '@nestjs/common';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Patch,
+  Param,
+  Delete,
+} from '@nestjs/common';
 import { RemediosService } from './remedios.service';
 import { CreateRemedioDto } from './dto/create-remedio.dto';
 import { UpdateRemedioDto } from './dto/update-remedio.dto';
@@ -15,6 +23,11 @@ export class RemediosController {
   @Get()
   findAll() {
     return this.remediosService.findAll();
+  }
+
+  @Get('codigo/:codigoBarras')
+  buscarPorCodigoBarras(@Param('codigoBarras') codigoBarras: string) {
+    return this.remediosService.buscarPorCodigoBarras(codigoBarras);
   }
 
   @Get(':id')
