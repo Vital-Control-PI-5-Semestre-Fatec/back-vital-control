@@ -1,42 +1,39 @@
 import { Module } from '@nestjs/common';
-import { MongooseModule } from '@nestjs/mongoose';
 import { ConfigModule, ConfigService } from '@nestjs/config';
-import { FichasModule } from './fichas/fichas.module';
-import { HistoricoModule } from './historico/historico.module';
-import { RemediosModule } from './remedios/remedios.module';
-import { RotinaModule } from './rotina/rotina.module';
-import { UserModule } from './users/user.module';
+import { APP_GUARD } from '@nestjs/core';
+import { MongooseModule } from '@nestjs/mongoose';
+import { AuditModule } from './audit/audit.module';
+import { AuthModule } from './auth/auth.module';
+import { CareGroupsModule } from './care-groups/care-groups.module';
+import { AuthGuard } from './common/auth';
+import { CommonModule } from './common/common.module';
+import { HomeVisitsModule } from './home-visits/home-visits.module';
+import { MedicationsModule } from './medications/medications.module';
+import { NotificationsModule } from './notifications/notifications.module';
+import { PatientsModule } from './patients/patients.module';
+import { SchedulesModule } from './schedules/schedules.module';
 
 @Module({
   imports: [
-    ConfigModule.forRoot({
-      isGlobal: true,
-    }),
-
+    ConfigModule.forRoot({ isGlobal: true }),
     MongooseModule.forRootAsync({
-      imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => {
-        const databaseUrl = configService.get<string>('DATABASE_URL');
-
-        if (!databaseUrl) {
-          throw new Error('DATABASE_URL não configurado no .env');
-        }
-
-        return {
-          uri: databaseUrl,
-        };
+      useFactory: (config: ConfigService) => {
+        const uri = config.get<string>('DATABASE_URL');
+        if (!uri) throw new Error('DATABASE_URL não configurado');
+        return { uri };
       },
     }),
-
-    UserModule,
-    RotinaModule,
-    RemediosModule,
-    FichasModule,
-    HistoricoModule,
+    CommonModule,
+    AuditModule,
+    AuthModule,
+    PatientsModule,
+    MedicationsModule,
+    SchedulesModule,
+    CareGroupsModule,
+    HomeVisitsModule,
+    NotificationsModule,
   ],
-
-  controllers: [],
-  providers: [],
+  providers: [{ provide: APP_GUARD, useClass: AuthGuard }],
 })
 export class AppModule {}
