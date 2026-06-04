@@ -1,5 +1,6 @@
 import { BadRequestException, Injectable, NotFoundException } from '@nestjs/common';
 import { InjectConnection, InjectModel } from '@nestjs/mongoose';
+import { ConfigService } from '@nestjs/config'; // adicionado
 import { Connection, Model } from 'mongoose';
 import { AuthUser } from '../common/auth';
 import { Medication, StockMovement } from '../database/schemas';
@@ -22,6 +23,7 @@ export class MedicationsService {
     @InjectModel(Medication.name) private readonly medications: Model<Medication>,
     @InjectModel(StockMovement.name) private readonly movements: Model<StockMovement>,
     @InjectConnection() private readonly connection: Connection,
+    private readonly configService: ConfigService, // adicionado
   ) {}
 
   list(patientId: string) { return this.medications.find({ patientId }).sort({ createdAt: -1 }); }
@@ -70,5 +72,22 @@ export class MedicationsService {
     if (!medication) throw new BadRequestException('Estoque insuficiente');
     const before = medication.stock.currentQuantity;
     await this.movements.create({ patientId, medicationId, administrationId, type: 'ADMINISTRATION', direction: 'OUT', quantity, stockBefore: before, stockAfter: before - quantity, performedByUserId: userId });
+  }
+
+  // COSMOS via fetch nativo — nenhuma dependência nova
+  async searchCosmos(barcode: string) {
+    const baseUrl = this.configService.get<string>('COSMOS_API_URL');
+    const token = this.configService.get<string>('COSMOS_API_TOKEN');
+
+    if (!baseUrl || !token) throw new BadRequestException('Credenciais do Cosmos não configuradas no servidor.');
+
+    const response = await fetch(`${baseUrl}/${barcode}.json`, {
+      headers: { 'X-Cosmos-Token': token },
+    });
+
+    if (response.status === 404) throw new NotFoundException('Medicamento não encontrado na base do Cosmos.');
+    if (!response.ok) throw new BadRequestException('Não foi possível comunicar com a API do Cosmos no momento.');
+
+    return response.json();
   }
 }

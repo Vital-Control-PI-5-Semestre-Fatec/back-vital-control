@@ -28,6 +28,7 @@ export class SchedulesService {
   ) {}
 
   list(patientId: string) { return this.schedules.find({ patientId }).sort({ createdAt: -1 }); }
+
   async history(patientId: string) {
     await this.markExpired();
     return this.administrations.find({ patientId }).sort({ scheduledFor: -1 });
@@ -51,18 +52,27 @@ export class SchedulesService {
     );
   }
 
-  async complete(patientId: string, administrationId: string, input: { notes?: string }, user: AuthUser) {
+  // AQUI ESTÁ A NOVA FUNÇÃO QUE O CONTROLLER ESTAVA PROCURANDO:
+  async updateStatus(patientId: string, administrationId: string, input: { status: string; justification?: string }, user: AuthUser) {
     const administration = await this.administrations.findOne({ _id: administrationId, patientId });
     if (!administration) throw new NotFoundException('Ocorrência não encontrada');
     if (administration.status !== 'PENDING') throw new BadRequestException('Ocorrência já finalizada');
+
     const elapsed = Date.now() - administration.scheduledFor.getTime();
     if (elapsed > 86400000) throw new BadRequestException('Prazo de 24 horas encerrado');
-    const dose = administration.medicationSnapshot.dose as { quantity: number };
-    await this.medicationService.consumeForAdministration(patientId, String(administration.medicationId), String(administration._id), dose.quantity, user.userId);
-    administration.status = elapsed > 0 ? 'TAKEN_LATE' : 'TAKEN_ON_TIME';
+
+    if (input.status === 'SKIPPED') {
+      administration.status = 'SKIPPED';
+    } else {
+      const dose = administration.medicationSnapshot.dose as { quantity: number };
+      await this.medicationService.consumeForAdministration(patientId, String(administration.medicationId), String(administration._id), dose.quantity, user.userId);
+      administration.status = input.status === 'TAKEN_LATE' ? 'TAKEN_LATE' : 'TAKEN_ON_TIME';
+    }
+
     administration.completedAt = new Date();
     administration.performedByUserId = user.userId as never;
-    administration.notes = input.notes;
+    administration.justification = input.justification;
+    
     return administration.save();
   }
 

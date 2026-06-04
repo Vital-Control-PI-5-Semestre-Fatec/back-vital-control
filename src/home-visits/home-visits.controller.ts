@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Put } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { IsDateString, IsObject, IsOptional, IsString } from 'class-validator';
 import { Model } from 'mongoose';
@@ -11,12 +11,21 @@ class RequestVisitDto {
   @IsObject() requestedWindow: { start: string; end: string };
   @IsObject() addressSnapshot: Record<string, string>;
 }
+
+class EditVisitDto {
+  @IsOptional() @IsString() reason?: string;
+}
+
 class AssignVisitDto {
   @IsString() careGroupId: string;
   @IsString() assignedCaregiverId: string;
   @IsObject() scheduledWindow: { start: string; end: string };
 }
-class StatusDto { @IsString() status: string; @IsOptional() @IsString() caregiverNotes?: string; }
+
+class StatusDto {
+  @IsString() status: string;
+  @IsOptional() @IsString() caregiverNotes?: string;
+}
 
 @Controller('home-visits')
 export class HomeVisitsController {
@@ -32,11 +41,37 @@ export class HomeVisitsController {
     await this.events.create({ homeVisitId: visit._id, type: 'CREATED', performedByUserId: user.userId });
     return visit;
   }
+
   @Get('mine')
   mine(@CurrentUser() user: AuthUser) {
     const filter = user.role === UserRole.PATIENT ? { patientId: user.userId } : user.role === UserRole.CAREGIVER ? { assignedCaregiverId: user.userId } : user.role === UserRole.CARE_MANAGER ? { managerId: user.userId } : { _id: null };
     return this.visits.find(filter).sort({ createdAt: -1 });
   }
+
+  @Roles(UserRole.PATIENT) @Put(':id')
+  async edit(@Param('id') id: string, @Body() body: EditVisitDto, @CurrentUser() user: AuthUser) {
+    const visit = await this.visits.findOne({ _id: id, patientId: user.userId });
+    if (!visit) throw new BadRequestException('Atendimento não encontrado');
+    if (visit.status !== 'REQUESTED') throw new BadRequestException('Apenas solicitações em triagem podem ser editadas');
+    if (body.reason) visit.reason = body.reason;
+    await visit.save();
+    await this.events.create({ homeVisitId: id, type: 'EDITED', performedByUserId: user.userId, details: { ...body } });
+    return visit;
+  }
+
+  @Roles(UserRole.PATIENT) @Patch(':id/cancel')
+  async cancel(@Param('id') id: string, @CurrentUser() user: AuthUser) {
+    const visit = await this.visits.findOne({ _id: id, patientId: user.userId });
+    if (!visit) throw new BadRequestException('Atendimento não encontrado');
+    if (!['REQUESTED', 'TRIAGED', 'SCHEDULED'].includes(visit.status)) {
+      throw new BadRequestException('Atendimento já iniciado ou finalizado');
+    }
+    visit.status = 'CANCELLED';
+    await visit.save();
+    await this.events.create({ homeVisitId: id, type: 'CANCELLED', performedByUserId: user.userId });
+    return visit;
+  }
+
   @Roles(UserRole.CARE_MANAGER) @Patch(':id/assign')
   async assign(@Param('id') id: string, @Body() body: AssignVisitDto, @CurrentUser() user: AuthUser) {
     const group = await this.groups.findOne({ _id: body.careGroupId, managerId: user.userId, caregiverIds: body.assignedCaregiverId, status: 'ACTIVE' });
@@ -46,6 +81,7 @@ export class HomeVisitsController {
     await this.events.create({ homeVisitId: id, type: 'ASSIGNED', performedByUserId: user.userId, details: { ...body } });
     return visit;
   }
+
   @Roles(UserRole.CAREGIVER) @Patch(':id/status')
   async status(@Param('id') id: string, @Body() body: StatusDto, @CurrentUser() user: AuthUser) {
     if (!['IN_PROGRESS', 'COMPLETED', 'NO_SHOW'].includes(body.status)) throw new BadRequestException('Status inválido');

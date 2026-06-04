@@ -14,6 +14,9 @@ class PatientProfileDto {
   @IsOptional() @IsArray() @IsString({ each: true }) allergies?: string[];
   @IsOptional() @IsArray() @IsString({ each: true }) preExistingConditions?: string[];
   @IsOptional() @IsObject() defaultAddress?: Record<string, string>;
+  
+  @IsOptional() @IsArray() emergencyContacts?: Record<string, string>[];
+  
   @IsOptional() @IsString() timezone?: string;
 }
 

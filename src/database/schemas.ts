@@ -3,6 +3,7 @@ import { HydratedDocument, Types } from 'mongoose';
 import { UserRole } from '../common/auth';
 
 export type UserDocument = HydratedDocument<User>;
+
 @Schema({ collection: 'users', timestamps: true })
 export class User {
   @Prop({ required: true, trim: true }) name: string;
@@ -22,6 +23,7 @@ export class PatientProfile {
   @Prop({ type: [String], default: [] }) allergies: string[];
   @Prop({ type: [String], default: [] }) preExistingConditions: string[];
   @Prop({ type: Object }) defaultAddress?: Record<string, string>;
+  @Prop({ type: [{ name: String, phone: String }], default: [] }) emergencyContacts?: { name: string; phone: string }[];
   @Prop({ default: 'America/Sao_Paulo' }) timezone: string;
 }
 export const PatientProfileSchema = SchemaFactory.createForClass(PatientProfile);
@@ -86,6 +88,7 @@ export class MedicationAdministration {
   @Prop({ enum: ['PENDING', 'TAKEN_ON_TIME', 'TAKEN_LATE', 'MISSED', 'SKIPPED'], default: 'PENDING' }) status: string;
   @Prop() completedAt?: Date;
   @Prop({ type: Types.ObjectId, ref: User.name }) performedByUserId?: Types.ObjectId;
+  @Prop() justification?: string;
   @Prop() notes?: string;
   @Prop({ type: Object, required: true }) medicationSnapshot: Record<string, unknown>;
 }
