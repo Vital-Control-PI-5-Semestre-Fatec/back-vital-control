@@ -6,6 +6,8 @@ import { Model } from 'mongoose';
 import { createAccessToken, UserRole } from '../common/auth';
 import { User } from '../database/schemas';
 
+const activeUserFilter = { $or: [{ status: 'ACTIVE' }, { status: { $exists: false } }] };
+
 const derive = promisify(pbkdf2);
 
 async function hashPassword(password: string): Promise<string> {
@@ -34,7 +36,7 @@ export class AuthService {
   }
 
   async login(input: { email: string; password: string }) {
-    const user = await this.users.findOne({ email: input.email.trim().toLowerCase(), status: 'ACTIVE' });
+    const user = await this.users.findOne({ email: input.email.trim().toLowerCase(), ...activeUserFilter });
     if (!user || !(await passwordMatches(input.password, user.passwordHash))) {
       throw new UnauthorizedException('E-mail ou senha inválidos');
     }

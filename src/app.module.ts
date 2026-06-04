@@ -12,6 +12,7 @@ import { MedicationsModule } from './medications/medications.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { PatientsModule } from './patients/patients.module';
 import { SchedulesModule } from './schedules/schedules.module';
+import { UsersModule } from './users/users.module';
 
 @Module({
   imports: [
@@ -33,6 +34,7 @@ import { SchedulesModule } from './schedules/schedules.module';
     CareGroupsModule,
     HomeVisitsModule,
     NotificationsModule,
+    UsersModule,
   ],
   providers: [{ provide: APP_GUARD, useClass: AuthGuard }],
 })

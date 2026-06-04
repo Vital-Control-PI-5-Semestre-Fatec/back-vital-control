@@ -19,7 +19,7 @@ export class AccessService {
             ? { responsibleIds: user.userId }
             : null;
     if (!filter) throw new ForbiddenException('Sem acesso ao paciente');
-    const allowed = await this.groups.exists({ patientId, status: 'ACTIVE', ...filter });
+    const allowed = await this.groups.exists({ patientIds: patientId, status: 'ACTIVE', ...filter });
     if (!allowed) throw new ForbiddenException('Sem acesso ao paciente');
   }
 

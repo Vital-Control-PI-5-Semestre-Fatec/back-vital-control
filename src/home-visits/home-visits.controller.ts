@@ -1,9 +1,11 @@
 import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Put } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { IsDateString, IsObject, IsOptional, IsString } from 'class-validator';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { AuthUser, CurrentUser, Roles, UserRole } from '../common/auth';
 import { CareGroup, HomeVisit, HomeVisitEvent } from '../database/schemas';
+
+const activeGroupFilter = { $or: [{ status: 'ACTIVE' }, { status: { $exists: false } }] };
 
 class RequestVisitDto {
   @IsString() reason: string;
@@ -37,14 +39,37 @@ export class HomeVisitsController {
 
   @Roles(UserRole.PATIENT) @Post()
   async request(@Body() body: RequestVisitDto, @CurrentUser() user: AuthUser) {
-    const visit = await this.visits.create({ ...body, patientId: user.userId });
+    const patientId = this.objectId(user.userId, 'Paciente inválido');
+    const visit = await this.visits.create({ ...body, patientId });
     await this.events.create({ homeVisitId: visit._id, type: 'CREATED', performedByUserId: user.userId });
     return visit;
   }
 
   @Get('mine')
-  mine(@CurrentUser() user: AuthUser) {
-    const filter = user.role === UserRole.PATIENT ? { patientId: user.userId } : user.role === UserRole.CAREGIVER ? { assignedCaregiverId: user.userId } : user.role === UserRole.CARE_MANAGER ? { managerId: user.userId } : { _id: null };
+  async mine(@CurrentUser() user: AuthUser) {
+    if (user.role === UserRole.CARE_MANAGER) {
+      const managerId = this.objectId(user.userId, 'Gerente inválido');
+      const groups = await this.groups.find({ managerId, ...activeGroupFilter }).select('patientIds').lean();
+      const patientIds = groups.flatMap((group) => group.patientIds);
+      const patientIdStrings = patientIds.map(String);
+      return this.visits.find({
+        $or: [
+          { managerId },
+          {
+            status: 'REQUESTED',
+            managerId: null,
+            $expr: { $in: [{ $toString: '$patientId' }, patientIdStrings] },
+          },
+        ],
+      }).sort({ createdAt: -1 });
+    }
+
+    const filter =
+      user.role === UserRole.PATIENT
+        ? { patientId: this.objectId(user.userId, 'Paciente inválido') }
+        : user.role === UserRole.CAREGIVER
+          ? { assignedCaregiverId: this.objectId(user.userId, 'Cuidador inválido') }
+          : { _id: null };
     return this.visits.find(filter).sort({ createdAt: -1 });
   }
 
@@ -74,20 +99,58 @@ export class HomeVisitsController {
 
   @Roles(UserRole.CARE_MANAGER) @Patch(':id/assign')
   async assign(@Param('id') id: string, @Body() body: AssignVisitDto, @CurrentUser() user: AuthUser) {
-    const group = await this.groups.findOne({ _id: body.careGroupId, managerId: user.userId, caregiverIds: body.assignedCaregiverId, status: 'ACTIVE' });
+    const visitId = this.objectId(id, 'Atendimento inválido');
+    const careGroupId = this.objectId(body.careGroupId, 'Grupo inválido');
+    const managerId = this.objectId(user.userId, 'Gerente inválido');
+    const assignedCaregiverId = this.objectId(body.assignedCaregiverId, 'Cuidador inválido');
+
+    const group = await this.groups.findOne({
+      _id: careGroupId,
+      managerId,
+      caregiverIds: assignedCaregiverId,
+      ...activeGroupFilter,
+    });
     if (!group) throw new BadRequestException('Grupo ou cuidador inválido');
-    const visit = await this.visits.findOneAndUpdate({ _id: id, patientId: group.patientId }, { ...body, managerId: user.userId, status: 'SCHEDULED' }, { new: true });
+
+    const patientIdStrings = group.patientIds.map(String);
+    const visit = await this.visits.findOneAndUpdate(
+      {
+        _id: visitId,
+        status: { $in: ['REQUESTED', 'TRIAGED'] },
+        $expr: { $in: [{ $toString: '$patientId' }, patientIdStrings] },
+      },
+      {
+        careGroupId,
+        assignedCaregiverId,
+        scheduledWindow: body.scheduledWindow,
+        managerId,
+        status: 'SCHEDULED',
+      },
+      { new: true, runValidators: true },
+    );
     if (!visit) throw new BadRequestException('Atendimento não encontrado');
-    await this.events.create({ homeVisitId: id, type: 'ASSIGNED', performedByUserId: user.userId, details: { ...body } });
+    await this.events.create({
+      homeVisitId: visitId,
+      type: 'ASSIGNED',
+      performedByUserId: managerId,
+      details: { careGroupId, assignedCaregiverId, scheduledWindow: body.scheduledWindow },
+    });
     return visit;
   }
 
   @Roles(UserRole.CAREGIVER) @Patch(':id/status')
   async status(@Param('id') id: string, @Body() body: StatusDto, @CurrentUser() user: AuthUser) {
     if (!['IN_PROGRESS', 'COMPLETED', 'NO_SHOW'].includes(body.status)) throw new BadRequestException('Status inválido');
-    const visit = await this.visits.findOneAndUpdate({ _id: id, assignedCaregiverId: user.userId }, body, { new: true });
+    const visitId = this.objectId(id, 'Atendimento inválido');
+    const assignedCaregiverId = this.objectId(user.userId, 'Cuidador inválido');
+    const visit = await this.visits.findOneAndUpdate({ _id: visitId, assignedCaregiverId }, body, { new: true });
     if (!visit) throw new BadRequestException('Atendimento não encontrado');
-    await this.events.create({ homeVisitId: id, type: 'STATUS_CHANGED', performedByUserId: user.userId, details: { ...body } });
+    await this.events.create({ homeVisitId: visitId, type: 'STATUS_CHANGED', performedByUserId: assignedCaregiverId, details: { ...body } });
     return visit;
+  }
+
+  private objectId(value: string, message: string): Types.ObjectId {
+    if (!Types.ObjectId.isValid(value)) throw new BadRequestException(message);
+    return new Types.ObjectId(value);
   }
 }

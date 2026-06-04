@@ -555,11 +555,11 @@ Resposta: administracao com `TAKEN_ON_TIME` ou `TAKEN_LATE`.
 
 ## 8. Grupos de cuidado
 
-Um grupo relaciona um paciente, um gerente, cuidadores e responsaveis.
+Um grupo relaciona pacientes, um gerente, cuidadores e responsaveis.
 
 ### `GET /care-groups/mine`
 
-Lista grupos ativos relacionados ao usuario autenticado.
+Lista grupos ativos cujo gerente dono e o usuario autenticado.
 
 Resposta:
 
@@ -568,7 +568,7 @@ Resposta:
   {
     "_id": "ObjectId",
     "name": "Grupo Beatriz Lima",
-    "patientId": "ObjectId",
+    "patientIds": ["ObjectId"],
     "managerId": "ObjectId",
     "caregiverIds": ["ObjectId"],
     "responsibleIds": ["ObjectId"],
@@ -577,8 +577,8 @@ Resposta:
 ]
 ```
 
-O frontend usa `patientId` para carregar medicamentos, estoque, rotinas e
-relatorios permitidos.
+O frontend usa cada item de `patientIds` para carregar medicamentos, estoque,
+rotinas e relatorios permitidos.
 
 ### `POST /care-groups`
 
@@ -589,7 +589,7 @@ Payload:
 ```json
 {
   "name": "Grupo Beatriz Lima",
-  "patientId": "ObjectId"
+  "patientIds": ["ObjectId"]
 }
 ```
 
@@ -601,6 +601,7 @@ Payload:
 
 ```json
 {
+  "patientIds": ["ObjectId"],
   "caregiverIds": ["ObjectId"],
   "responsibleIds": ["ObjectId"]
 }
@@ -656,7 +657,7 @@ Lista atendimentos relacionados a conta:
 | --- | --- |
 | `PATIENT` | solicitacoes criadas pelo paciente |
 | `CAREGIVER` | atendimentos atribuidos ao cuidador |
-| `CARE_MANAGER` | atendimentos ja associados ao gerente |
+| `CARE_MANAGER` | atendimentos associados ao gerente e novas solicitacoes dos pacientes de seus grupos |
 | `RESPONSIBLE` | lista vazia na versao atual |
 
 Resposta:
@@ -930,7 +931,7 @@ users and sensitive resources
 
 | Campo | Tipo | Observacao |
 | --- | --- | --- |
-| `patientId` | `ObjectId` | paciente |
+| `patientIds` | `ObjectId[]` | pacientes |
 | `medicationId` | `ObjectId` | medicamento |
 | `type` | `string` | motivo da movimentacao |
 | `direction` | `IN \| OUT` | entrada ou saida |
@@ -1062,9 +1063,6 @@ O frontend deve considerar estes pontos:
 11. A regra planejada de ocultar nome do paciente por iniciais para cuidadores
     ainda precisa ser aplicada no backend. O frontend nao deve expor o documento
     completo retornado por `/patients/:patientId/profile` para esse perfil.
-12. O gerente ainda nao possui endpoint para listar solicitacoes `REQUESTED` sem
-    `managerId`. O fluxo de triagem precisa desse endpoint antes de funcionar de
-    ponta a ponta.
 
 ## 17. Seguranca
 

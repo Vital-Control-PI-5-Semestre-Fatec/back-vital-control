@@ -98,7 +98,7 @@ MedicationAdministrationSchema.index({ scheduleId: 1, scheduledFor: 1 }, { uniqu
 @Schema({ collection: 'care_groups', timestamps: true })
 export class CareGroup {
   @Prop({ required: true }) name: string;
-  @Prop({ type: Types.ObjectId, ref: User.name, required: true, index: true }) patientId: Types.ObjectId;
+  @Prop({ type: [Types.ObjectId], ref: User.name, required: true, default: [], index: true }) patientIds: Types.ObjectId[];
   @Prop({ type: Types.ObjectId, ref: User.name, required: true, index: true }) managerId: Types.ObjectId;
   @Prop({ type: [Types.ObjectId], default: [] }) caregiverIds: Types.ObjectId[];
   @Prop({ type: [Types.ObjectId], default: [] }) responsibleIds: Types.ObjectId[];
