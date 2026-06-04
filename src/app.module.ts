@@ -12,21 +12,31 @@ import { UserModule } from './users/user.module';
     ConfigModule.forRoot({
       isGlobal: true,
     }),
+
     MongooseModule.forRootAsync({
       imports: [ConfigModule],
       inject: [ConfigService],
-      useFactory: (configService: ConfigService) => ({
-        uri: configService.get<string>('DATABASE_URL'),
-      }),
+      useFactory: (configService: ConfigService) => {
+        const databaseUrl = configService.get<string>('DATABASE_URL');
+
+        if (!databaseUrl) {
+          throw new Error('DATABASE_URL não configurado no .env');
+        }
+
+        return {
+          uri: databaseUrl,
+        };
+      },
     }),
+
     UserModule,
     RotinaModule,
     RemediosModule,
     FichasModule,
-    HistoricoModule
+    HistoricoModule,
   ],
 
-  controllers: [], 
-  providers: [],   
+  controllers: [],
+  providers: [],
 })
 export class AppModule {}
