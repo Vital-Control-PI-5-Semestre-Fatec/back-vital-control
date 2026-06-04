@@ -1,8 +1,8 @@
-import { ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
+import { BadRequestException, ConflictException, Injectable, UnauthorizedException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { pbkdf2, randomBytes, timingSafeEqual } from 'node:crypto';
 import { promisify } from 'node:util';
-import { Model } from 'mongoose';
+import { Model, Types } from 'mongoose';
 import { createAccessToken, UserRole } from '../common/auth';
 import { User } from '../database/schemas';
 
@@ -41,6 +41,24 @@ export class AuthService {
       throw new UnauthorizedException('E-mail ou senha inválidos');
     }
     return this.response(user);
+  }
+
+  async changePassword(userId: string, input: { currentPassword: string; newPassword: string }) {
+    if (!input.newPassword || input.newPassword.length < 8) {
+      throw new BadRequestException('A nova senha deve ter no minimo 8 caracteres');
+    }
+    if (!Types.ObjectId.isValid(userId)) {
+      throw new UnauthorizedException('Sessao invalida');
+    }
+
+    const user = await this.users.findOne({ _id: new Types.ObjectId(userId), ...activeUserFilter });
+    if (!user || !(await passwordMatches(input.currentPassword, user.passwordHash))) {
+      throw new UnauthorizedException('Senha atual incorreta');
+    }
+
+    user.passwordHash = await hashPassword(input.newPassword);
+    await user.save();
+    return { success: true, message: 'Senha alterada com sucesso' };
   }
 
   private response(user: User & { _id: unknown }) {
