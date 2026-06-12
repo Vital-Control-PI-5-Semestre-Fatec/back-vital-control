@@ -29,10 +29,23 @@ export class CareGroupsController {
 
   @Get('mine')
   async mine(@CurrentUser() user: AuthUser) {
-    const managerId = this.objectId(user.userId, 'Gerente invalido');
-    const groups = await this.groups.find({ managerId, ...activeGroupFilter }).lean();
+    const userId = new Types.ObjectId(user.userId);
+    const groups = await this.groups.find({
+      $and: [
+        {
+          $or: [
+            { managerId: userId },
+            { patientIds: userId },
+            { caregiverIds: userId },
+            { responsibleIds: userId },
+          ],
+        },
+        activeGroupFilter,
+      ],
+    }).lean();
     return groups.map((group) => this.response(group));
   }
+
   @Roles(UserRole.CARE_MANAGER) @Post()
   async create(@Body() body: CreateGroupDto, @CurrentUser() user: AuthUser) {
     const members = await this.validatedMembers(body);
@@ -43,6 +56,7 @@ export class CareGroupsController {
     });
     return this.response(group.toObject());
   }
+
   @Roles(UserRole.CARE_MANAGER) @Patch(':id/members')
   async updateMembers(@Param('id') id: string, @Body() body: UpdateMembersDto, @CurrentUser() user: AuthUser) {
     const groupId = this.objectId(id, 'Grupo invalido');

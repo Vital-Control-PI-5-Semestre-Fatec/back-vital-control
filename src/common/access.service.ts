@@ -10,16 +10,19 @@ export class AccessService {
 
   async assertPatientReadAccess(user: AuthUser, patientId: string): Promise<void> {
     if (user.role === UserRole.PATIENT && user.userId === patientId) return;
-    const filter =
+    const patientOid = new Types.ObjectId(patientId);
+    const userOid = new Types.ObjectId(user.userId);
+    const roleFilter =
       user.role === UserRole.CAREGIVER
-        ? { caregiverIds: user.userId }
+        ? { caregiverIds: userOid }
         : user.role === UserRole.CARE_MANAGER
-          ? { managerId: user.userId }
+          ? { managerId: userOid }
           : user.role === UserRole.RESPONSIBLE
-            ? { responsibleIds: user.userId }
+            ? { responsibleIds: userOid }
             : null;
-    if (!filter) throw new ForbiddenException('Sem acesso ao paciente');
-    const allowed = await this.groups.exists({ patientIds: patientId, status: 'ACTIVE', ...filter });
+    if (!roleFilter) throw new ForbiddenException('Sem acesso ao paciente');
+    const activeFilter = { $or: [{ status: 'ACTIVE' }, { status: { $exists: false } }] };
+    const allowed = await this.groups.exists({ patientIds: patientOid, ...activeFilter, ...roleFilter });
     if (!allowed) throw new ForbiddenException('Sem acesso ao paciente');
   }
 

@@ -1,4 +1,4 @@
-import { BadRequestException, Body, Controller, Get, Param, Patch, Post, Put } from '@nestjs/common';
+import { BadRequestException, Body, Controller, ForbiddenException, Get, Param, Patch, Post, Put } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { IsDateString, IsObject, IsOptional, IsString } from 'class-validator';
 import { Model, Types } from 'mongoose';
@@ -12,6 +12,7 @@ class RequestVisitDto {
   @IsOptional() @IsString() patientNotes?: string;
   @IsObject() requestedWindow: { start: string; end: string };
   @IsObject() addressSnapshot: Record<string, string>;
+  @IsOptional() @IsString() patientId?: string;
 }
 
 class EditVisitDto {
@@ -37,10 +38,20 @@ export class HomeVisitsController {
     @InjectModel(CareGroup.name) private readonly groups: Model<CareGroup>,
   ) {}
 
-  @Roles(UserRole.PATIENT) @Post()
+  @Roles(UserRole.PATIENT, UserRole.RESPONSIBLE) @Post()
   async request(@Body() body: RequestVisitDto, @CurrentUser() user: AuthUser) {
-    const patientId = this.objectId(user.userId, 'Paciente inválido');
-    const visit = await this.visits.create({ ...body, patientId });
+    let patientId: Types.ObjectId;
+
+    if (user.role === UserRole.RESPONSIBLE) {
+      if (!body.patientId) throw new BadRequestException('Paciente obrigatório para responsável');
+      patientId = this.objectId(body.patientId, 'Paciente inválido');
+      await this.assertResponsiblePatientAccess(user.userId, patientId);
+    } else {
+      patientId = this.objectId(user.userId, 'Paciente inválido');
+    }
+
+    const { patientId: _pid, ...visitData } = body;
+    const visit = await this.visits.create({ ...visitData, patientId });
     await this.events.create({ homeVisitId: visit._id, type: 'CREATED', performedByUserId: user.userId });
     return visit;
   }
@@ -64,6 +75,14 @@ export class HomeVisitsController {
       }).sort({ createdAt: -1 });
     }
 
+    if (user.role === UserRole.RESPONSIBLE) {
+      const responsibleId = this.objectId(user.userId, 'Responsável inválido');
+      const groups = await this.groups.find({ responsibleIds: responsibleId, ...activeGroupFilter }).select('patientIds').lean();
+      const patientIds = groups.flatMap((group) => group.patientIds);
+      if (!patientIds.length) return [];
+      return this.visits.find({ patientId: { $in: patientIds } }).sort({ createdAt: -1 });
+    }
+
     const filter =
       user.role === UserRole.PATIENT
         ? { patientId: this.objectId(user.userId, 'Paciente inválido') }
@@ -84,15 +103,26 @@ export class HomeVisitsController {
     return visit;
   }
 
-  @Roles(UserRole.PATIENT) @Patch(':id/cancel')
+  @Roles(UserRole.PATIENT, UserRole.RESPONSIBLE) @Patch(':id/cancel')
   async cancel(@Param('id') id: string, @CurrentUser() user: AuthUser) {
-    const visit = await this.visits.findOne({ _id: id, patientId: user.userId });
-    if (!visit) throw new BadRequestException('Atendimento não encontrado');
-    if (!['REQUESTED', 'TRIAGED', 'SCHEDULED'].includes(visit.status)) {
+    let patientFilter: Record<string, unknown>;
+
+    if (user.role === UserRole.RESPONSIBLE) {
+      const responsibleId = this.objectId(user.userId, 'Responsável inválido');
+      const groups = await this.groups.find({ responsibleIds: responsibleId, ...activeGroupFilter }).select('patientIds').lean();
+      const patientIds = groups.flatMap((group) => group.patientIds);
+      patientFilter = { patientId: { $in: patientIds } };
+    } else {
+      patientFilter = { patientId: user.userId };
+    }
+
+    const existing = await this.visits.findOne({ _id: id, ...patientFilter }).lean();
+    if (!existing) throw new BadRequestException('Atendimento não encontrado');
+    if (!['REQUESTED', 'TRIAGED', 'SCHEDULED'].includes(existing.status)) {
       throw new BadRequestException('Atendimento já iniciado ou finalizado');
     }
-    visit.status = 'CANCELLED';
-    await visit.save();
+
+    const visit = await this.visits.findOneAndUpdate({ _id: id }, { status: 'CANCELLED' }, { new: true });
     await this.events.create({ homeVisitId: id, type: 'CANCELLED', performedByUserId: user.userId });
     return visit;
   }
@@ -147,6 +177,12 @@ export class HomeVisitsController {
     if (!visit) throw new BadRequestException('Atendimento não encontrado');
     await this.events.create({ homeVisitId: visitId, type: 'STATUS_CHANGED', performedByUserId: assignedCaregiverId, details: { ...body } });
     return visit;
+  }
+
+  private async assertResponsiblePatientAccess(responsibleUserId: string, patientId: Types.ObjectId): Promise<void> {
+    const responsibleId = this.objectId(responsibleUserId, 'Responsável inválido');
+    const allowed = await this.groups.exists({ responsibleIds: responsibleId, patientIds: patientId, ...activeGroupFilter });
+    if (!allowed) throw new ForbiddenException('Sem acesso a este paciente');
   }
 
   private objectId(value: string, message: string): Types.ObjectId {
