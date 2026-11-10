@@ -1,10 +1,33 @@
 import { Injectable } from '@nestjs/common';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
-import { AuditLog } from '../database/schemas';
+import { AuditLog, mapAuditLog } from '../database/schemas';
+import { SupabaseService } from '../database/supabase.service';
 
 @Injectable()
 export class AuditService {
-  constructor(@InjectModel(AuditLog.name) private readonly logs: Model<AuditLog>) {}
-  record(input: Partial<AuditLog>) { return this.logs.create(input); }
+  constructor(private readonly supabase: SupabaseService) {}
+
+  async record(input: Partial<AuditLog>): Promise<AuditLog | null> {
+    if (!input.actorUserId || !input.action || !input.resourceType) {
+      return null;
+    }
+
+    const { data, error } = await this.supabase.client
+      .from('audit_logs')
+      .insert({
+        actor_user_id: input.actorUserId,
+        action: input.action,
+        resource_type: input.resourceType,
+        resource_id: input.resourceId ?? null,
+        patient_id: input.patientId ?? null,
+        metadata: input.metadata ?? null,
+      })
+      .select()
+      .single();
+
+    if (error || !data) {
+      return null;
+    }
+
+    return mapAuditLog(data);
+  }
 }
