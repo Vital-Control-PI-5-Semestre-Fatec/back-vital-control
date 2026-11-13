@@ -4,10 +4,9 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { InjectModel } from '@nestjs/mongoose';
-import { Model } from 'mongoose';
 import { AuthUser } from '../common/auth';
-import { Medication, StockMovement } from '../database/schemas';
+import { mapMedication, mapStockMovement } from '../database/schemas';
+import { SupabaseService } from '../database/supabase.service';
 
 export interface CreateMedicationInput {
   name: string;
@@ -37,27 +36,40 @@ export interface UpdateMedicationInput {
 @Injectable()
 export class MedicationsService {
   constructor(
-    @InjectModel(Medication.name)
-    private readonly medications: Model<Medication>,
-
-    @InjectModel(StockMovement.name)
-    private readonly movements: Model<StockMovement>,
-
+    private readonly supabase: SupabaseService,
     private readonly configService: ConfigService,
   ) {}
 
   async list(patientId: string): Promise<unknown> {
-    return this.medications.find({ patientId }).sort({ createdAt: -1 }).exec();
+    const { data, error } = await this.supabase.client
+      .from('medications')
+      .select('*')
+      .eq('patient_id', patientId)
+      .order('created_at', { ascending: false });
+
+    if (error || !data) {
+      return [];
+    }
+
+    return data.map(mapMedication);
   }
 
   async movementsFor(
     patientId: string,
     medicationId: string,
   ): Promise<unknown> {
-    return this.movements
-      .find({ patientId, medicationId })
-      .sort({ occurredAt: -1 })
-      .exec();
+    const { data, error } = await this.supabase.client
+      .from('stock_movements')
+      .select('*')
+      .eq('patient_id', patientId)
+      .eq('medication_id', medicationId)
+      .order('occurred_at', { ascending: false });
+
+    if (error || !data) {
+      return [];
+    }
+
+    return data.map(mapStockMovement);
   }
 
   async create(
@@ -88,34 +100,46 @@ export class MedicationsService {
       throw new BadRequestException('Limite de estoque inválido');
     }
 
-    const medication = await this.medications.create({
-      patientId,
-      name: input.name.trim(),
-      dosageDescription: input.dosageDescription.trim(),
-      barcode: input.barcode,
-      brand: input.brand,
-      imageUrl: input.imageUrl,
-      notes: input.notes,
-      registrationSource: input.registrationSource ?? 'MANUAL',
-      active: true,
-      stock: {
-        currentQuantity: quantity,
-        unit: input.unit,
-        lowStockThreshold,
-      },
-    });
+    const { data: medicationRow, error } = await this.supabase.client
+      .from('medications')
+      .insert({
+        patient_id: patientId,
+        name: input.name.trim(),
+        dosage_description: input.dosageDescription.trim(),
+        barcode: input.barcode ?? null,
+        brand: input.brand ?? null,
+        image_url: input.imageUrl ?? null,
+        notes: input.notes ?? null,
+        registration_source: input.registrationSource ?? 'MANUAL',
+        active: true,
+        stock: {
+          currentQuantity: quantity,
+          unit: input.unit,
+          lowStockThreshold,
+        },
+      })
+      .select()
+      .single();
+
+    if (error || !medicationRow) {
+      throw new BadRequestException(
+        error?.message ?? 'Erro ao cadastrar medicamento',
+      );
+    }
+
+    const medication = mapMedication(medicationRow);
 
     if (quantity > 0) {
-      await this.movements.create({
-        patientId,
-        medicationId: medication._id,
+      await this.supabase.client.from('stock_movements').insert({
+        patient_id: patientId,
+        medication_id: medication.id,
         type: 'INITIAL_BALANCE',
         direction: 'IN',
         quantity,
-        stockBefore: 0,
-        stockAfter: quantity,
+        stock_before: 0,
+        stock_after: quantity,
         reason: 'Saldo inicial do cadastro',
-        performedByUserId: user.userId,
+        performed_by_user_id: user.userId,
       });
     }
 
@@ -127,29 +151,38 @@ export class MedicationsService {
     medicationId: string,
     input: UpdateMedicationInput,
   ): Promise<unknown> {
-    const medication = await this.medications
-      .findOne({ _id: medicationId, patientId })
-      .exec();
+    const { data: existingRow } = await this.supabase.client
+      .from('medications')
+      .select('*')
+      .eq('id', medicationId)
+      .eq('patient_id', patientId)
+      .maybeSingle();
 
-    if (!medication) {
+    if (!existingRow) {
       throw new NotFoundException('Medicamento não encontrado');
     }
 
-    if (input.name !== undefined) medication.name = input.name.trim();
+    const medication = mapMedication(existingRow);
+    const updatePayload: Record<string, unknown> = {};
+
+    if (input.name !== undefined) updatePayload.name = input.name.trim();
     if (input.dosageDescription !== undefined) {
-      medication.dosageDescription = input.dosageDescription.trim();
+      updatePayload.dosage_description = input.dosageDescription.trim();
     }
-    if (input.barcode !== undefined) medication.barcode = input.barcode;
-    if (input.brand !== undefined) medication.brand = input.brand;
-    if (input.notes !== undefined) medication.notes = input.notes;
-    if (input.imageUrl !== undefined) medication.imageUrl = input.imageUrl;
+    if (input.barcode !== undefined) updatePayload.barcode = input.barcode;
+    if (input.brand !== undefined) updatePayload.brand = input.brand;
+    if (input.notes !== undefined) updatePayload.notes = input.notes;
+    if (input.imageUrl !== undefined) updatePayload.image_url = input.imageUrl;
     if (input.registrationSource !== undefined) {
-      medication.registrationSource = input.registrationSource;
+      updatePayload.registration_source = input.registrationSource;
     }
 
+    const nextStock = { ...medication.stock };
+    let stockChanged = false;
+
     if (input.unit !== undefined) {
-      medication.stock.unit = input.unit;
-      medication.markModified('stock');
+      nextStock.unit = input.unit;
+      stockChanged = true;
     }
 
     if (input.lowStockThreshold !== undefined) {
@@ -157,29 +190,58 @@ export class MedicationsService {
         throw new BadRequestException('Limite de estoque inválido');
       }
 
-      medication.stock.lowStockThreshold = input.lowStockThreshold;
-      medication.markModified('stock');
+      nextStock.lowStockThreshold = input.lowStockThreshold;
+      stockChanged = true;
     }
 
-    const savedMedication = await medication.save();
+    if (stockChanged) {
+      updatePayload.stock = nextStock;
+    }
 
-    return savedMedication;
+    const { data: updatedRow, error } = await this.supabase.client
+      .from('medications')
+      .update(updatePayload)
+      .eq('id', medicationId)
+      .eq('patient_id', patientId)
+      .select()
+      .single();
+
+    if (error || !updatedRow) {
+      throw new BadRequestException(
+        error?.message ?? 'Erro ao atualizar medicamento',
+      );
+    }
+
+    return mapMedication(updatedRow);
   }
 
   async deactivate(patientId: string, medicationId: string): Promise<unknown> {
-    const medication = await this.medications
-      .findOne({ _id: medicationId, patientId })
-      .exec();
+    const { data: existingRow } = await this.supabase.client
+      .from('medications')
+      .select('id')
+      .eq('id', medicationId)
+      .eq('patient_id', patientId)
+      .maybeSingle();
 
-    if (!medication) {
+    if (!existingRow) {
       throw new NotFoundException('Medicamento não encontrado');
     }
 
-    medication.active = false;
+    const { data: updatedRow, error } = await this.supabase.client
+      .from('medications')
+      .update({ active: false })
+      .eq('id', medicationId)
+      .eq('patient_id', patientId)
+      .select()
+      .single();
 
-    const savedMedication = await medication.save();
+    if (error || !updatedRow) {
+      throw new BadRequestException(
+        error?.message ?? 'Erro ao desativar medicamento',
+      );
+    }
 
-    return savedMedication;
+    return mapMedication(updatedRow);
   }
 
   async adjust(
@@ -199,18 +261,19 @@ export class MedicationsService {
       throw new BadRequestException('Quantidade deve ser positiva');
     }
 
-    const medication = await this.medications
-      .findOne({
-        _id: medicationId,
-        patientId,
-        active: true,
-      })
-      .exec();
+    const { data: existingRow } = await this.supabase.client
+      .from('medications')
+      .select('*')
+      .eq('id', medicationId)
+      .eq('patient_id', patientId)
+      .eq('active', true)
+      .maybeSingle();
 
-    if (!medication) {
+    if (!existingRow) {
       throw new NotFoundException('Medicamento não encontrado');
     }
 
+    const medication = mapMedication(existingRow);
     const before = medication.stock.currentQuantity;
     const after = before + (incoming ? input.quantity : -input.quantity);
 
@@ -218,24 +281,38 @@ export class MedicationsService {
       throw new BadRequestException('Estoque insuficiente');
     }
 
-    medication.stock.currentQuantity = after;
-    medication.markModified('stock');
+    const nextStock = {
+      ...medication.stock,
+      currentQuantity: after,
+    };
 
-    await medication.save();
+    const { data: updatedRow, error } = await this.supabase.client
+      .from('medications')
+      .update({ stock: nextStock })
+      .eq('id', medicationId)
+      .eq('patient_id', patientId)
+      .select()
+      .single();
 
-    await this.movements.create({
-      patientId,
-      medicationId,
+    if (error || !updatedRow) {
+      throw new BadRequestException(
+        error?.message ?? 'Erro ao atualizar estoque',
+      );
+    }
+
+    await this.supabase.client.from('stock_movements').insert({
+      patient_id: patientId,
+      medication_id: medicationId,
       type: input.type,
       direction: incoming ? 'IN' : 'OUT',
       quantity: input.quantity,
-      stockBefore: before,
-      stockAfter: after,
-      reason: input.reason,
-      performedByUserId: user.userId,
+      stock_before: before,
+      stock_after: after,
+      reason: input.reason ?? null,
+      performed_by_user_id: user.userId,
     });
 
-    return medication;
+    return mapMedication(updatedRow);
   }
 
   async consumeForAdministration(
@@ -245,42 +322,60 @@ export class MedicationsService {
     quantity: number,
     userId: string,
   ): Promise<void> {
-    const existing = await this.movements.exists({ administrationId }).exec();
+    const { data: existingMovement } = await this.supabase.client
+      .from('stock_movements')
+      .select('id')
+      .eq('administration_id', administrationId)
+      .maybeSingle();
 
-    if (existing) {
+    if (existingMovement) {
       return;
     }
 
-    const medication = await this.medications
-      .findOneAndUpdate(
-        {
-          _id: medicationId,
-          patientId,
-          'stock.currentQuantity': { $gte: quantity },
-        },
-        {
-          $inc: { 'stock.currentQuantity': -quantity },
-        },
-        { new: false },
-      )
-      .exec();
+    const { data: medicationRow } = await this.supabase.client
+      .from('medications')
+      .select('*')
+      .eq('id', medicationId)
+      .eq('patient_id', patientId)
+      .maybeSingle();
 
-    if (!medication) {
+    if (!medicationRow) {
       throw new BadRequestException('Estoque insuficiente');
     }
 
+    const medication = mapMedication(medicationRow);
     const before = medication.stock.currentQuantity;
 
-    await this.movements.create({
-      patientId,
-      medicationId,
-      administrationId,
+    if (before < quantity) {
+      throw new BadRequestException('Estoque insuficiente');
+    }
+
+    const after = before - quantity;
+    const nextStock = {
+      ...medication.stock,
+      currentQuantity: after,
+    };
+
+    const { error: updateError } = await this.supabase.client
+      .from('medications')
+      .update({ stock: nextStock })
+      .eq('id', medicationId)
+      .eq('patient_id', patientId);
+
+    if (updateError) {
+      throw new BadRequestException('Estoque insuficiente');
+    }
+
+    await this.supabase.client.from('stock_movements').insert({
+      patient_id: patientId,
+      medication_id: medicationId,
+      administration_id: administrationId,
       type: 'ADMINISTRATION',
       direction: 'OUT',
       quantity,
-      stockBefore: before,
-      stockAfter: before - quantity,
-      performedByUserId: userId,
+      stock_before: before,
+      stock_after: after,
+      performed_by_user_id: userId,
     });
   }
 

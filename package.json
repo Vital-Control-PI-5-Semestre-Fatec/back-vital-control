@@ -24,15 +24,13 @@
     "@nestjs/config": "^4.0.4",
     "@nestjs/core": "^11.0.1",
     "@nestjs/mapped-types": "^2.1.1",
-    "@nestjs/mongoose": "^11.0.4",
     "@nestjs/platform-express": "^11.0.1",
+    "@supabase/supabase-js": "^2.118.0",
     "class-transformer": "^0.5.1",
     "class-validator": "^0.15.1",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
-    "mongodb": "^7.2.0",
-    "mongoose": "^9.6.2",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.1"
   },
@@ -62,6 +60,44 @@
     "tsconfig-paths": "^4.2.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.20.0"
+  },
+  "overrides": {
+    "@babel/core": "^7.29.13",
+    "@jest/reporters": {
+      "glob": "^14.0.3"
+    },
+    "@nestjs/cli": {
+      "glob": "^14.0.3"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch": "^11.0.4"
+    },
+    "baseline-browser-mapping": "^2.11.35",
+    "body-parser": "^2.4.0",
+    "browserslist": "^4.29.5",
+    "deepmerge": "4.1.2",
+    "fast-uri": "^3.1.9",
+    "form-data": "^4.0.6",
+    "handlebars": "^4.7.10",
+    "jest-config": {
+      "glob": "^14.0.3"
+    },
+    "jest-runtime": {
+      "glob": "^14.0.3"
+    },
+    "js-yaml": "^4.3.2",
+    "@istanbuljs/load-nyc-config": {
+      "js-yaml": "^3.15.2"
+    },
+    "minimatch@^3.0.0": {
+      "brace-expansion": "^1.1.21"
+    },
+    "minimatch@^11.0.0": {
+      "brace-expansion": "^5.0.12"
+    },
+    "multer": "^2.5.0",
+    "proxy-addr": "^2.0.8",
+    "qs": "^6.17.1"
   },
   "jest": {
     "moduleFileExtensions": [

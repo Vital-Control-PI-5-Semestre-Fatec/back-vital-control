@@ -1,4 +1,4 @@
-import { Body, Controller, Get, Param, Patch, Post } from '@nestjs/common';
+import { Body, Controller, Get, Param, Patch, Post, Query } from '@nestjs/common';
 import {
   IsArray,
   IsDateString,
@@ -94,6 +94,20 @@ class UpdateStatusDto {
   @IsOptional()
   @IsString()
   justification?: string;
+
+  @IsOptional()
+  @IsString()
+  notes?: string;
+}
+
+class TakeAdministrationDto {
+  @IsOptional()
+  @IsString()
+  notes?: string;
+
+  @IsOptional()
+  @IsString()
+  justification?: string;
 }
 
 @Controller('patients/:patientId')
@@ -149,10 +163,11 @@ export class SchedulesController {
   @Get('administrations')
   async history(
     @Param('patientId') patientId: string,
+    @Query('date') date: string | undefined,
     @CurrentUser() user: AuthUser,
   ): Promise<unknown> {
     await this.access.assertPatientReadAccess(user, patientId);
-    return this.service.history(patientId);
+    return this.service.history(patientId, date);
   }
 
   @Roles(UserRole.PATIENT)
@@ -171,7 +186,7 @@ export class SchedulesController {
     );
   }
 
-  @Roles(UserRole.PATIENT, UserRole.CAREGIVER)
+  @Roles(UserRole.PATIENT, UserRole.CAREGIVER, UserRole.RESPONSIBLE)
   @Patch('administrations/:administrationId/status')
   async updateStatus(
     @Param('patientId') patientId: string,
@@ -186,5 +201,31 @@ export class SchedulesController {
     }
 
     return this.service.updateStatus(patientId, administrationId, body, user);
+  }
+
+  @Roles(UserRole.PATIENT, UserRole.CAREGIVER, UserRole.RESPONSIBLE)
+  @Patch('administrations/:administrationId/take')
+  async take(
+    @Param('patientId') patientId: string,
+    @Param('administrationId') administrationId: string,
+    @Body() body: TakeAdministrationDto,
+    @CurrentUser() user: AuthUser,
+  ): Promise<unknown> {
+    await this.access.assertPatientReadAccess(user, patientId);
+
+    if (user.role === UserRole.CAREGIVER) {
+      await this.service.assertCaregiverHasActiveVisit(patientId, user.userId);
+    }
+
+    return this.service.updateStatus(
+      patientId,
+      administrationId,
+      {
+        status: 'TAKEN_ON_TIME',
+        justification: body.justification ?? body.notes,
+        notes: body.notes ?? body.justification,
+      },
+      user,
+    );
   }
 }
