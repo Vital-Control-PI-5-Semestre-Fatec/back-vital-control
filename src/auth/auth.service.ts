@@ -10,6 +10,8 @@ import { createAccessToken, UserRole } from '../common/auth';
 import { mapUser, User } from '../database/schemas';
 import { isValidUuid, SupabaseService } from '../database/supabase.service';
 
+const activeUserFilter = { $or: [{ status: 'ACTIVE' }, { status: { $exists: false } }] };
+
 const derive = promisify(pbkdf2);
 
 async function hashPassword(password: string): Promise<string> {
