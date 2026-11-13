@@ -9,8 +9,7 @@ import { promisify } from 'node:util';
 import { createAccessToken, UserRole } from '../common/auth';
 import { mapUser, User } from '../database/schemas';
 import { isValidUuid, SupabaseService } from '../database/supabase.service';
-
-const activeUserFilter = { $or: [{ status: 'ACTIVE' }, { status: { $exists: false } }] };
+import { AuditService } from '../audit/audit.service';
 
 const derive = promisify(pbkdf2);
 
@@ -30,7 +29,10 @@ async function passwordMatches(password: string, stored: string): Promise<boolea
 
 @Injectable()
 export class AuthService {
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(
+    private readonly supabase: SupabaseService,
+    private readonly audit: AuditService,
+  ) {}
 
   async register(input: { name: string; email: string; password: string; role: UserRole }) {
     const email = input.email.trim().toLowerCase();
@@ -65,7 +67,18 @@ export class AuthService {
       throw new BadRequestException(error?.message ?? 'Erro ao cadastrar usuário');
     }
 
-    return this.response(mapUser(data));
+    const mapped = mapUser(data);
+
+    // Trilha de auditoria (RF08)
+    void this.audit.record({
+      actorUserId: mapped.id,
+      action: 'USER_REGISTERED',
+      resourceType: 'USER',
+      resourceId: mapped.id,
+      metadata: { role: mapped.role, email: mapped.email },
+    });
+
+    return this.response(mapped);
   }
 
   async login(input: { email: string; password: string }) {
@@ -82,9 +95,28 @@ export class AuthService {
     }
 
     const user = mapUser(data);
-    if (!(await passwordMatches(input.password, user.passwordHash))) {
+    const matches = await passwordMatches(input.password, user.passwordHash);
+
+    if (!matches) {
+      // Registrar tentativa de login malsucedida (RF11 / RF08)
+      void this.audit.record({
+        actorUserId: user.id,
+        action: 'USER_LOGIN_FAILED',
+        resourceType: 'AUTH',
+        resourceId: user.id,
+        metadata: { email, reason: 'INVALID_CREDENTIALS' },
+      });
       throw new UnauthorizedException('E-mail ou senha inválidos');
     }
+
+    // Registrar login bem-sucedido (RF08)
+    void this.audit.record({
+      actorUserId: user.id,
+      action: 'USER_LOGIN_SUCCESS',
+      resourceType: 'AUTH',
+      resourceId: user.id,
+      metadata: { role: user.role, email },
+    });
 
     return this.response(user);
   }
@@ -122,6 +154,15 @@ export class AuthService {
     if (error) {
       throw new BadRequestException('Não foi possível alterar a senha');
     }
+
+    // Registrar troca de senha (RF08)
+    void this.audit.record({
+      actorUserId: userId,
+      action: 'USER_PASSWORD_CHANGED',
+      resourceType: 'USER',
+      resourceId: userId,
+      metadata: { changedAt: new Date().toISOString() },
+    });
 
     return { success: true, message: 'Senha alterada com sucesso' };
   }
