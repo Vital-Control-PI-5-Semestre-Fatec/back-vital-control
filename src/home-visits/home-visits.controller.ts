@@ -14,8 +14,6 @@ import { AuthUser, CurrentUser, Roles, UserRole } from '../common/auth';
 import { formatNameInitials, HomeVisit, mapCareGroup, mapHomeVisit } from '../database/schemas';
 import { isValidUuid, SupabaseService } from '../database/supabase.service';
 
-const activeGroupFilter = { $or: [{ status: 'ACTIVE' }, { status: { $exists: false } }] };
-
 class RequestVisitDto {
   @IsString() reason: string;
   @IsOptional() @IsString() patientNotes?: string;
@@ -446,16 +444,5 @@ export class HomeVisitsController {
   private objectId(value: string, message: string): string {
     if (!isValidUuid(value)) throw new BadRequestException(message);
     return value.trim();
-  }
-
-  private async assertResponsiblePatientAccess(responsibleUserId: string, patientId: Types.ObjectId): Promise<void> {
-    const responsibleId = this.objectId(responsibleUserId, 'Responsável inválido');
-    const allowed = await this.groups.exists({ responsibleIds: responsibleId, patientIds: patientId, ...activeGroupFilter });
-    if (!allowed) throw new ForbiddenException('Sem acesso a este paciente');
-  }
-
-  private objectId(value: string, message: string): Types.ObjectId {
-    if (!Types.ObjectId.isValid(value)) throw new BadRequestException(message);
-    return new Types.ObjectId(value);
   }
 }

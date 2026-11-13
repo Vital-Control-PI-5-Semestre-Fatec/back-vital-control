@@ -187,6 +187,31 @@ export interface AuditLog {
   metadata?: Record<string, unknown>;
 }
 
+export interface UserConsent {
+  _id?: string;
+  id?: string;
+  userId: string;
+  purpose: string;
+  consented: boolean;
+  version: string;
+  consentedAt: string;
+  revokedAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface LgpdDataRequest {
+  _id?: string;
+  id?: string;
+  userId: string;
+  requestType: 'ACCESS_EXPORT' | 'CORRECTION' | 'DELETION';
+  details?: string;
+  status: 'PENDING' | 'IN_REVIEW' | 'COMPLETED' | 'REJECTED';
+  responseNotes?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
 // Mappers entre linhas snake_case do PostgreSQL/Supabase e objetos camelCase do contrato da API
 
 export function mapUser(row: Record<string, any>): User {
@@ -382,5 +407,34 @@ export function mapAuditLog(row: Record<string, any>): AuditLog {
     patientId: row.patient_id ? String(row.patient_id) : undefined,
     occurredAt: row.occurred_at,
     metadata: row.metadata ?? undefined,
+  };
+}
+
+export function mapUserConsent(row: Record<string, any>): UserConsent {
+  return {
+    _id: String(row.id),
+    id: String(row.id),
+    userId: String(row.user_id),
+    purpose: row.purpose,
+    consented: Boolean(row.consented),
+    version: row.version ?? '1.0',
+    consentedAt: row.consented_at ?? row.created_at,
+    revokedAt: row.revoked_at ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+export function mapLgpdDataRequest(row: Record<string, any>): LgpdDataRequest {
+  return {
+    _id: String(row.id),
+    id: String(row.id),
+    userId: String(row.user_id),
+    requestType: row.request_type,
+    details: row.details ?? undefined,
+    status: row.status ?? 'PENDING',
+    responseNotes: row.response_notes ?? undefined,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
   };
 }

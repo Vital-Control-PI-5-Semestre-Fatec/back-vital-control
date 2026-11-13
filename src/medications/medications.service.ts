@@ -7,6 +7,7 @@ import { ConfigService } from '@nestjs/config';
 import { AuthUser } from '../common/auth';
 import { mapMedication, mapStockMovement } from '../database/schemas';
 import { SupabaseService } from '../database/supabase.service';
+import { AuditService } from '../audit/audit.service';
 
 export interface CreateMedicationInput {
   name: string;
@@ -38,6 +39,7 @@ export class MedicationsService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly configService: ConfigService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(patientId: string): Promise<unknown> {
@@ -143,6 +145,16 @@ export class MedicationsService {
       });
     }
 
+    // Trilha de auditoria (RF08)
+    void this.audit.record({
+      actorUserId: user.userId,
+      action: 'MEDICATION_CREATED',
+      resourceType: 'MEDICATION',
+      resourceId: medication.id,
+      patientId,
+      metadata: { name: medication.name, initialQuantity: quantity },
+    });
+
     return medication;
   }
 
@@ -212,6 +224,15 @@ export class MedicationsService {
       );
     }
 
+    void this.audit.record({
+      actorUserId: patientId,
+      action: 'MEDICATION_UPDATED',
+      resourceType: 'MEDICATION',
+      resourceId: medicationId,
+      patientId,
+      metadata: { updatedFields: Object.keys(updatePayload) },
+    });
+
     return mapMedication(updatedRow);
   }
 
@@ -240,6 +261,14 @@ export class MedicationsService {
         error?.message ?? 'Erro ao desativar medicamento',
       );
     }
+
+    void this.audit.record({
+      actorUserId: patientId,
+      action: 'MEDICATION_DEACTIVATED',
+      resourceType: 'MEDICATION',
+      resourceId: medicationId,
+      patientId,
+    });
 
     return mapMedication(updatedRow);
   }

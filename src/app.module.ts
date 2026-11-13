@@ -13,6 +13,7 @@ import { NotificationsModule } from './notifications/notifications.module';
 import { PatientsModule } from './patients/patients.module';
 import { SchedulesModule } from './schedules/schedules.module';
 import { UsersModule } from './users/users.module';
+import { LgpdModule } from './lgpd/lgpd.module';
 
 @Module({
   imports: [
@@ -20,6 +21,7 @@ import { UsersModule } from './users/users.module';
     DatabaseModule,
     CommonModule,
     AuditModule,
+    LgpdModule,
     AuthModule,
     PatientsModule,
     MedicationsModule,

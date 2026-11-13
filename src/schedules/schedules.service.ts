@@ -11,6 +11,7 @@ import {
 } from '../database/schemas';
 import { SupabaseService } from '../database/supabase.service';
 import { MedicationsService } from '../medications/medications.service';
+import { AuditService } from '../audit/audit.service';
 
 export interface CreateScheduleInput {
   medicationId: string;
@@ -31,6 +32,7 @@ export class SchedulesService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly medicationService: MedicationsService,
+    private readonly audit: AuditService,
   ) {}
 
   async list(patientId: string): Promise<unknown> {
@@ -432,6 +434,21 @@ export class SchedulesService {
         error?.message ?? 'Erro ao atualizar ocorrência',
       );
     }
+
+    // Trilha de auditoria (RF08)
+    void this.audit.record({
+      actorUserId: user.userId,
+      action: 'MEDICATION_DOSE_RECORDED',
+      resourceType: 'MEDICATION_ADMINISTRATION',
+      resourceId: administrationId,
+      patientId,
+      metadata: {
+        status: nextStatus,
+        scheduledFor: administration.scheduledFor,
+        medicationId: administration.medicationId,
+        justification: input.justification ?? input.notes,
+      },
+    });
 
     return mapMedicationAdministration(updatedRow);
   }
