@@ -211,6 +211,69 @@ describe('LgpdService (Consentimento, Portabilidade & Direitos do Titular - RF01
         }),
       );
     });
+
+    it('deve exportar dossiê em formato CSV com cabeçalhos compatíveis com Excel e BOM UTF-8', async () => {
+      const mockChain = (data: any) => ({
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        single: jest.fn().mockResolvedValue({ data, error: null }),
+        maybeSingle: jest.fn().mockResolvedValue({ data, error: null }),
+        then: (resolve: any) => resolve({ data, error: null }),
+      });
+
+      mockSupabase.client.from.mockImplementation((table: string) => {
+        if (table === 'users') return mockChain({ id: validUserId, name: 'Paciente Teste', email: 'teste@exemplo.com' });
+        if (table === 'patient_profiles') return mockChain({ patient_id: validUserId, allergies: ['Dipirona'] });
+        if (table === 'medications') return mockChain([{ id: 'm1', name: 'Losartana', dosage: '50mg' }]);
+        if (table === 'medication_schedules') return mockChain([]);
+        if (table === 'medication_administrations') return mockChain([]);
+        if (table === 'user_consents') return mockChain([{ purpose: 'TRATAMENTO_DADOS_SAUDE', consented: true }]);
+        if (table === 'lgpd_data_requests') return mockChain([]);
+        return mockChain(null);
+      });
+
+      const csv = await service.exportMyDataCsv(validUserId);
+
+      expect(typeof csv).toBe('string');
+      expect(csv.startsWith('\uFEFF')).toBe(true); // UTF-8 BOM
+      expect(csv).toContain('DOSSIÊ DE DADOS DO TITULAR');
+      expect(csv).toContain('Paciente Teste');
+      expect(csv).toContain('teste@exemplo.com');
+      expect(csv).toContain('Losartana');
+      expect(csv).toContain('TRATAMENTO_DADOS_SAUDE');
+    });
+
+    it('deve exportar dossiê em formato PDF binário contendo cabeçalho e estrutura vetorial', async () => {
+      const mockChain = (data: any) => ({
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        order: jest.fn().mockReturnThis(),
+        limit: jest.fn().mockReturnThis(),
+        single: jest.fn().mockResolvedValue({ data, error: null }),
+        maybeSingle: jest.fn().mockResolvedValue({ data, error: null }),
+        then: (resolve: any) => resolve({ data, error: null }),
+      });
+
+      mockSupabase.client.from.mockImplementation((table: string) => {
+        if (table === 'users') return mockChain({ id: validUserId, name: 'Paciente Teste', email: 'teste@exemplo.com' });
+        if (table === 'patient_profiles') return mockChain({ patient_id: validUserId, allergies: ['Dipirona'] });
+        if (table === 'medications') return mockChain([{ id: 'm1', name: 'Losartana' }]);
+        if (table === 'medication_schedules') return mockChain([]);
+        if (table === 'medication_administrations') return mockChain([]);
+        if (table === 'user_consents') return mockChain([{ purpose: 'TRATAMENTO_DADOS_SAUDE', consented: true }]);
+        if (table === 'lgpd_data_requests') return mockChain([]);
+        return mockChain(null);
+      });
+
+      const pdfBuffer = await service.exportMyDataPdf(validUserId);
+
+      expect(Buffer.isBuffer(pdfBuffer)).toBe(true);
+      expect(pdfBuffer.length).toBeGreaterThan(500);
+      // Assinatura mágica de arquivo PDF: "%PDF-"
+      expect(pdfBuffer.subarray(0, 5).toString('ascii')).toBe('%PDF-');
+    });
   });
 });
 

@@ -1,4 +1,5 @@
 import { BadRequestException, Injectable, Logger } from '@nestjs/common';
+import PDFDocument = require('pdfkit');
 import { SupabaseService } from '../database/supabase.service';
 import { AuditService } from '../audit/audit.service';
 import {
@@ -7,6 +8,8 @@ import {
   mapPatientProfile,
   mapUser,
   mapUserConsent,
+  PatientProfile,
+  User,
   UserConsent,
 } from '../database/schemas';
 
@@ -229,7 +232,10 @@ export class LgpdService {
   /**
    * RF02: Exportação imediata do dossiê do titular (Direito de Acesso e Portabilidade - Art. 18, II e V da LGPD).
    */
-  async exportMyData(userId: string): Promise<Record<string, unknown>> {
+  async exportMyData(
+    userId: string,
+    format: 'JSON' | 'CSV' | 'PDF' = 'JSON',
+  ): Promise<Record<string, unknown>> {
     // 1. Dados cadastrais do usuário
     const { data: userRow } = await this.supabase.client
       .from('users')
@@ -279,6 +285,7 @@ export class LgpdService {
       patientId: userId,
       metadata: {
         exportTimestamp: new Date().toISOString(),
+        format,
       },
     });
 
@@ -293,6 +300,244 @@ export class LgpdService {
       consentsHistory: consents,
       dataSubjectRequests: requests,
     };
+  }
+
+  /**
+   * RF02: Exportação em CSV (Portabilidade de dados e leitura em planilhas / Excel - Art. 18, V).
+   */
+  async exportMyDataCsv(userId: string): Promise<string> {
+    const dossier = await this.exportMyData(userId, 'CSV');
+    const u = dossier.user as User | null;
+    const p = dossier.clinicalProfile as PatientProfile | null;
+    const meds = (dossier.medications as Array<Record<string, unknown>>) || [];
+    const scheds = (dossier.medicationSchedules as Array<Record<string, unknown>>) || [];
+    const admins = (dossier.recentAdministrations as Array<Record<string, unknown>>) || [];
+    const consents = (dossier.consentsHistory as UserConsent[]) || [];
+    const requests = (dossier.dataSubjectRequests as LgpdDataRequest[]) || [];
+
+    const lines: string[] = [];
+    lines.push('\uFEFF'); // BOM para suporte a caracteres acentuados no Excel
+
+    lines.push('=== DOSSIÊ DE DADOS DO TITULAR (LGPD - LEI 13.709/2018) ===');
+    lines.push(`Emitido em;${dossier.exportedAt}`);
+    lines.push(`Base Legal;${dossier.legalBasis}`);
+    lines.push('');
+
+    lines.push('--- DADOS CADASTRAIS (ART. 18) ---');
+    lines.push('Campo;Valor');
+    lines.push(`Identificador Único (ID);${u?.id ?? 'N/D'}`);
+    lines.push(`Nome Completo;${u?.name ?? 'N/D'}`);
+    lines.push(`E-mail;${u?.email ?? 'N/D'}`);
+    lines.push(`Perfil de Acesso;${u?.role ?? 'N/D'}`);
+    lines.push(`Status da Conta;${u?.status ?? 'N/D'}`);
+    lines.push(`Data de Criação;${u?.createdAt ?? 'N/D'}`);
+    lines.push('');
+
+    const emergencyStr =
+      p?.emergencyContacts && p.emergencyContacts.length > 0
+        ? p.emergencyContacts.map((c) => `${c.name} (${c.phone})`).join(', ')
+        : 'N/D';
+
+    lines.push('--- PERFIL CLÍNICO / PRONTUÁRIO ---');
+    lines.push('Campo;Valor');
+    lines.push(`Tipo Sanguíneo;${p?.bloodType ?? 'Não informado'}`);
+    lines.push(`Alergias;${p?.allergies && p.allergies.length > 0 ? `"${p.allergies.join(', ')}"` : 'Nenhuma'}`);
+    lines.push(`Condições Pré-existentes;${p?.preExistingConditions && p.preExistingConditions.length > 0 ? `"${p.preExistingConditions.join(', ')}"` : 'Nenhuma'}`);
+    lines.push(`Contatos de Emergência;${emergencyStr}`);
+    lines.push('');
+
+    lines.push('--- MEDICAMENTOS CADASTRADOS ---');
+    lines.push('Nome do Medicamento;Dosagem;Instruções;Observações');
+    if (meds.length === 0) {
+      lines.push('Nenhum medicamento registrado;;;');
+    } else {
+      for (const m of meds) {
+        lines.push(`"${String(m.name ?? '')}";"${String(m.dosage_description ?? m.dosage ?? '')}";"${String(m.instructions ?? '')}";"${String(m.notes ?? '')}"`);
+      }
+    }
+    lines.push('');
+
+    lines.push('--- AGENDAMENTOS E ROTINAS ---');
+    lines.push('Medicamento ID;Horário Previsto;Dose;Instruções');
+    if (scheds.length === 0) {
+      lines.push('Nenhum agendamento registrado;;;');
+    } else {
+      for (const s of scheds) {
+        lines.push(`"${String(s.medication_id ?? '')}";"${String(s.scheduled_time ?? s.time ?? '')}";"${String(s.dosage ?? '')}";"${String(s.instructions ?? '')}"`);
+      }
+    }
+    lines.push('');
+
+    lines.push('--- HISTÓRICO DE ADMINISTRAÇÕES RECENTES ---');
+    lines.push('Agendamento ID;Horário Previsto;Horário Realizado;Status;Administrado Por');
+    if (admins.length === 0) {
+      lines.push('Nenhuma administração registrada;;;;');
+    } else {
+      for (const a of admins) {
+        lines.push(`"${String(a.schedule_id ?? '')}";"${String(a.scheduled_for ?? '')}";"${String(a.administered_at ?? '')}";"${String(a.status ?? '')}";"${String(a.administered_by ?? '')}"`);
+      }
+    }
+    lines.push('');
+
+    lines.push('--- HISTÓRICO DE CONSENTIMENTOS LGPD ---');
+    lines.push('Finalidade;Autorizado;Data de Registro;Data de Revogação');
+    if (consents.length === 0) {
+      lines.push('Nenhum consentimento registrado;;;');
+    } else {
+      for (const c of consents) {
+        lines.push(`"${c.purpose}";"${c.consented ? 'AUTORIZADO' : 'REVOGADO'}";"${c.createdAt ?? c.consentedAt}";"${c.revokedAt ?? 'Ativo'}"`);
+      }
+    }
+    lines.push('');
+
+    lines.push('--- PROTOCOLOS E SOLICITAÇÕES DO TITULAR (ART. 18) ---');
+    lines.push('Protocolo ID;Tipo;Status;Detalhes;Data de Abertura;Data de Resposta');
+    if (requests.length === 0) {
+      lines.push('Nenhuma solicitação registrada;;;;;');
+    } else {
+      for (const r of requests) {
+        lines.push(`"${r.id ?? ''}";"${r.requestType}";"${r.status}";"${(r.details ?? '').replace(/"/g, '""')}";"${r.createdAt ?? ''}";"${r.updatedAt ?? 'Em andamento'}"`);
+      }
+    }
+
+    return lines.join('\r\n');
+  }
+
+  /**
+   * RF02: Exportação em PDF (Dossiê oficial formatado para leitura humana, impressão e comprovação médica - Art. 19, II).
+   */
+  async exportMyDataPdf(userId: string): Promise<Buffer> {
+    const dossier = await this.exportMyData(userId, 'PDF');
+    const u = dossier.user as User | null;
+    const p = dossier.clinicalProfile as PatientProfile | null;
+    const meds = (dossier.medications as Array<Record<string, unknown>>) || [];
+    const consents = (dossier.consentsHistory as UserConsent[]) || [];
+    const requests = (dossier.dataSubjectRequests as LgpdDataRequest[]) || [];
+
+    return new Promise<Buffer>((resolve, reject) => {
+      try {
+        const doc = new PDFDocument({ margin: 40, size: 'A4' });
+        const chunks: Buffer[] = [];
+
+        doc.on('data', (chunk: Buffer) => chunks.push(chunk));
+        doc.on('end', () => resolve(Buffer.concat(chunks)));
+        doc.on('error', (err: Error) => reject(err));
+
+        const primaryColor = '#0284c7'; // Azul Vital Control
+        const darkColor = '#0f172a';
+        const mutedColor = '#64748b';
+        const borderColor = '#cbd5e1';
+
+        // Cabeçalho institucional
+        doc.rect(40, 40, 515, 60).fill('#f0f9ff');
+        doc.fillColor(primaryColor).fontSize(16).font('Helvetica-Bold')
+           .text('VITAL CONTROL - GESTÃO EM SAÚDE', 55, 52);
+        doc.fillColor(darkColor).fontSize(11).font('Helvetica')
+           .text('Dossiê de Dados do Titular (LGPD - Lei nº 13.709/2018)', 55, 73);
+        doc.fillColor(mutedColor).fontSize(8)
+           .text(`Emissão: ${new Date().toLocaleString('pt-BR')} | Base Legal: Art. 18, II e V`, 55, 87);
+
+        doc.moveDown(3);
+
+        const addSectionHeader = (title: string) => {
+          doc.moveDown(0.8);
+          doc.fillColor(primaryColor).fontSize(12).font('Helvetica-Bold').text(title);
+          doc.strokeColor(borderColor).lineWidth(1).moveTo(doc.x, doc.y + 2).lineTo(555, doc.y + 2).stroke();
+          doc.moveDown(0.4);
+        };
+
+        const addField = (label: string, value: string) => {
+          doc.fillColor(mutedColor).fontSize(9).font('Helvetica-Bold').text(`${label}: `, { continued: true });
+          doc.fillColor(darkColor).font('Helvetica').text(value || 'N/D');
+        };
+
+        // 1. Dados Cadastrais
+        addSectionHeader('1. Dados Cadastrais do Titular');
+        addField('Nome Completo', u?.name ?? 'N/D');
+        addField('E-mail Cadastrado', u?.email ?? 'N/D');
+        addField('Perfil de Acesso', u?.role ?? 'N/D');
+        addField('Status da Conta', u?.status ?? 'N/D');
+        addField('Data de Cadastro', u?.createdAt ? new Date(u.createdAt).toLocaleString('pt-BR') : 'N/D');
+        addField('Identificador Único (ID)', u?.id ?? 'N/D');
+
+        // 2. Prontuário Clínico
+        addSectionHeader('2. Perfil Clínico e Prontuário');
+        addField('Tipo Sanguíneo', p?.bloodType ?? 'Não informado');
+        addField(
+          'Alergias Conhecidas',
+          p?.allergies && p.allergies.length > 0 ? p.allergies.join(', ') : 'Nenhuma alergia registrada',
+        );
+        addField(
+          'Condições Pré-existentes',
+          p?.preExistingConditions && p.preExistingConditions.length > 0
+            ? p.preExistingConditions.join(', ')
+            : 'Nenhuma condição registrada',
+        );
+
+        const emergencyContactsStr =
+          p?.emergencyContacts && p.emergencyContacts.length > 0
+            ? p.emergencyContacts.map((c) => `${c.name} (${c.phone})`).join(', ')
+            : 'N/D';
+        addField('Contatos de Emergência', emergencyContactsStr);
+
+        // 3. Medicamentos Cadastrados
+        addSectionHeader('3. Medicamentos em Uso');
+        if (meds.length === 0) {
+          doc.fillColor(mutedColor).fontSize(9).font('Helvetica-Oblique').text('Nenhum medicamento registrado para este paciente.');
+        } else {
+          meds.forEach((m, idx) => {
+            doc.fillColor(darkColor).fontSize(9).font('Helvetica-Bold')
+               .text(`${idx + 1}. ${String(m.name ?? 'Medicamento')} - Dosagem: ${String(m.dosage_description ?? m.dosage ?? 'N/D')}`);
+            if (m.instructions) {
+              doc.fillColor(mutedColor).fontSize(8).font('Helvetica').text(`   Instruções: ${String(m.instructions)}`);
+            }
+          });
+        }
+
+        // 4. Consentimentos LGPD (RF01)
+        addSectionHeader('4. Histórico de Consentimentos (Art. 8º da LGPD)');
+        if (consents.length === 0) {
+          doc.fillColor(mutedColor).fontSize(9).font('Helvetica-Oblique').text('Nenhum consentimento específico registrado.');
+        } else {
+          consents.forEach((c) => {
+            const statusStr = c.consented ? 'AUTORIZADO' : 'REVOGADO';
+            const statusColor = c.consented ? '#059669' : '#dc2626';
+            doc.fillColor(statusColor).fontSize(9).font('Helvetica-Bold').text(`• [${statusStr}] `, { continued: true });
+            const dateStr = c.createdAt ? new Date(c.createdAt).toLocaleDateString('pt-BR') : 'N/D';
+            doc.fillColor(darkColor).font('Helvetica').text(`${c.purpose} (Atualizado em: ${dateStr})`);
+          });
+        }
+
+        // 5. Solicitações de Titular (RF02)
+        addSectionHeader('5. Protocolos e Solicitações do Titular (Art. 18 da LGPD)');
+        if (requests.length === 0) {
+          doc.fillColor(mutedColor).fontSize(9).font('Helvetica-Oblique').text('Nenhuma solicitação formal registrada pelo titular.');
+        } else {
+          requests.forEach((r) => {
+            const reqId = r.id ? `${r.id.slice(0, 8)}...` : 'S/N';
+            doc.fillColor(darkColor).fontSize(9).font('Helvetica-Bold')
+               .text(`• Protocolo ${reqId} - Tipo: ${r.requestType} - Status: ${r.status}`);
+            if (r.details) {
+              doc.fillColor(mutedColor).fontSize(8).font('Helvetica').text(`   Detalhes: ${r.details}`);
+            }
+          });
+        }
+
+        // Rodapé de Integridade
+        doc.moveDown(2);
+        doc.strokeColor(borderColor).lineWidth(0.5).moveTo(40, doc.y).lineTo(555, doc.y).stroke();
+        doc.moveDown(0.5);
+        doc.fillColor(mutedColor).fontSize(7).font('Helvetica')
+           .text(
+             'Este documento constitui o dossiê oficial de dados pessoais do titular gerado pela plataforma Vital Control em conformidade com os artigos 18 e 19 da Lei Geral de Proteção de Dados (Lei 13.709/2018). Em caso de dúvidas sobre este relatório, contate o Encarregado pelo Tratamento de Dados Pessoais (DPO): dpo@vitalcontrol.com.br.',
+             { align: 'justify' },
+           );
+
+        doc.end();
+      } catch (err) {
+        reject(err);
+      }
+    });
   }
 }
 
