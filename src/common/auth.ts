@@ -74,7 +74,8 @@ export class AuthGuard implements CanActivate {
       return true;
     }
     const request = context.switchToHttp().getRequest<AuthRequest>();
-    const token = request.headers.authorization?.replace(/^Bearer\s+/i, '');
+    const queryToken = typeof request.query?.token === 'string' ? request.query.token : undefined;
+    const token = request.headers.authorization?.replace(/^Bearer\s+/i, '') || queryToken;
     const secret = process.env.JWT_SECRET;
     if (!token || !secret) throw new UnauthorizedException('Autenticação necessária');
     request.user = verifyAccessToken(token, secret);

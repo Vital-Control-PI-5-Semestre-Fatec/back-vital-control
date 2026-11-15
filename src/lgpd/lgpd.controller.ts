@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpStatus, Post, Res, UseGuards } from '@nestjs/common';
+import type { Response } from 'express';
 import { AuthGuard, AuthUser, CurrentUser, Public } from '../common/auth';
 import { LgpdService, PrivacyPolicyDoc } from './lgpd.service';
 import { LgpdDataRequest, UserConsent } from '../database/schemas';
@@ -68,11 +69,39 @@ export class LgpdController {
   }
 
   /**
-   * RF02: Exportar dados pessoais do titular (Direito de Acesso e Portabilidade - Art. 18 LGPD).
+   * RF02: Exportar dados pessoais do titular em JSON (Portabilidade técnica - Art. 18 LGPD).
    */
   @Get('export-my-data')
   async exportMyData(@CurrentUser() user: AuthUser): Promise<Record<string, unknown>> {
-    return this.lgpdService.exportMyData(user.userId);
+    return this.lgpdService.exportMyData(user.userId, 'JSON');
+  }
+
+  /**
+   * RF02: Exportar dados pessoais do titular em CSV (Planilha / Excel - Art. 18 LGPD).
+   */
+  @Get('export-my-data/csv')
+  async exportMyDataCsv(
+    @CurrentUser() user: AuthUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const csv = await this.lgpdService.exportMyDataCsv(user.userId);
+    res.setHeader('Content-Type', 'text/csv; charset=utf-8');
+    res.setHeader('Content-Disposition', 'attachment; filename="vital-control-dados-titular.csv"');
+    res.status(HttpStatus.OK).send(csv);
+  }
+
+  /**
+   * RF02: Exportar dados pessoais do titular em PDF (Dossiê oficial formatado - Art. 19 LGPD).
+   */
+  @Get('export-my-data/pdf')
+  async exportMyDataPdf(
+    @CurrentUser() user: AuthUser,
+    @Res() res: Response,
+  ): Promise<void> {
+    const pdfBuffer = await this.lgpdService.exportMyDataPdf(user.userId);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'attachment; filename="vital-control-dossie-titular.pdf"');
+    res.status(HttpStatus.OK).end(pdfBuffer);
   }
 }
 
