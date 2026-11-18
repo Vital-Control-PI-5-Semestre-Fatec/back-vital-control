@@ -76,6 +76,8 @@ describe('AuthService (Criptografia, Autenticação Segura & Auditoria - RF06, R
         email: 'paciente@vitalcontrol.com.br',
         password: 'SenhaForte@123',
         role: UserRole.PATIENT,
+        acceptedTerms: true,
+        termsVersion: '1.0.0',
       });
 
       expect(res.user.email).toBe('paciente@vitalcontrol.com.br');
@@ -111,8 +113,72 @@ describe('AuthService (Criptografia, Autenticação Segura & Auditoria - RF06, R
           email: 'existente@vitalcontrol.com.br',
           password: 'SenhaForte@123',
           role: UserRole.PATIENT,
+          acceptedTerms: true,
         }),
       ).rejects.toThrow(ConflictException);
+    });
+
+    it('deve rejeitar cadastro com BadRequestException se o usuário não tiver aceito a Política de Privacidade e Termos LGPD', async () => {
+      await expect(
+        service.register({
+          name: 'Sem Aceite',
+          email: 'semaceite@vitalcontrol.com.br',
+          password: 'SenhaForte@123',
+          role: UserRole.PATIENT,
+          acceptedTerms: false,
+        }),
+      ).rejects.toThrow(BadRequestException);
+    });
+
+    it('deve registrar consentimentos específicos do perfil selecionado (ex: Cuidador / TERMO_CONFIDENCIALIDADE_SIGILO)', async () => {
+      const selectBuilder = {
+        select: jest.fn().mockReturnThis(),
+        eq: jest.fn().mockReturnThis(),
+        maybeSingle: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+
+      const insertBuilder = {
+        insert: jest.fn().mockReturnThis(),
+        select: jest.fn().mockReturnThis(),
+        single: jest.fn().mockResolvedValue({
+          data: {
+            id: validUserId,
+            name: 'Cuidador Teste',
+            email: 'cuidador@vitalcontrol.com.br',
+            password_hash: 'mocked_hash',
+            role: 'CAREGIVER',
+            status: 'ACTIVE',
+            created_at: new Date().toISOString(),
+          },
+          error: null,
+        }),
+      };
+
+      const consentInsertBuilder = {
+        insert: jest.fn().mockResolvedValue({ data: null, error: null }),
+      };
+
+      mockSupabase.client.from
+        .mockReturnValueOnce(selectBuilder)
+        .mockReturnValueOnce(insertBuilder)
+        .mockReturnValue(consentInsertBuilder);
+
+      await service.register({
+        name: 'Cuidador Teste',
+        email: 'cuidador@vitalcontrol.com.br',
+        password: 'SenhaForte@123',
+        role: UserRole.CAREGIVER,
+        acceptedTerms: true,
+      });
+
+      expect(mockAudit.record).toHaveBeenCalledWith(
+        expect.objectContaining({
+          action: 'USER_REGISTERED',
+          metadata: expect.objectContaining({
+            registeredConsents: ['TERMO_CONFIDENCIALIDADE_SIGILO'],
+          }),
+        }),
+      );
     });
   });
 

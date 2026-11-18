@@ -34,7 +34,21 @@ export class AuthService {
     private readonly audit: AuditService,
   ) {}
 
-  async register(input: { name: string; email: string; password: string; role: UserRole }) {
+  async register(input: {
+    name: string;
+    email: string;
+    password: string;
+    role: UserRole;
+    acceptedTerms?: boolean;
+    termsVersion?: string;
+    profileConsents?: string[];
+  }) {
+    if (!input.acceptedTerms) {
+      throw new BadRequestException(
+        'É obrigatório ler e concordar com a Política de Privacidade e os Termos de Tratamento de Dados (LGPD) para criar uma conta.',
+      );
+    }
+
     const email = input.email.trim().toLowerCase();
 
     const { data: existing } = await this.supabase.client
@@ -69,13 +83,47 @@ export class AuthService {
 
     const mapped = mapUser(data);
 
+    // Mapeamento de finalidades de consentimento por perfil de usuário (Art. 8º §4º e Art. 11 LGPD)
+    const roleDefaultPurposes: Record<UserRole, string[]> = {
+      [UserRole.PATIENT]: ['TRATAMENTO_DADOS_SAUDE', 'COMPARTILHAMENTO_CUIDADOR'],
+      [UserRole.RESPONSIBLE]: ['REPRESENTACAO_LEGAL_DEPENDENTE', 'COMPARTILHAMENTO_CUIDADOR'],
+      [UserRole.CAREGIVER]: ['TERMO_CONFIDENCIALIDADE_SIGILO'],
+      [UserRole.CARE_MANAGER]: ['TERMO_GESTAO_GOVERNANCA'],
+    };
+
+    const purposesToInsert =
+      input.profileConsents && input.profileConsents.length > 0
+        ? input.profileConsents
+        : roleDefaultPurposes[mapped.role] ?? ['TRATAMENTO_DADOS_SAUDE'];
+
+    // Registra consentimentos formais na tabela user_consents (RF01)
+    for (const purpose of purposesToInsert) {
+      try {
+        await this.supabase.client.from('user_consents').insert({
+          user_id: mapped.id,
+          purpose,
+          consented: true,
+          version: input.termsVersion ?? '1.0.0',
+          consented_at: new Date().toISOString(),
+        });
+      } catch {
+        // Resiliente
+      }
+    }
+
     // Trilha de auditoria (RF08)
     void this.audit.record({
       actorUserId: mapped.id,
       action: 'USER_REGISTERED',
       resourceType: 'USER',
       resourceId: mapped.id,
-      metadata: { role: mapped.role, email: mapped.email },
+      metadata: {
+        role: mapped.role,
+        email: mapped.email,
+        acceptedTerms: true,
+        termsVersion: input.termsVersion ?? '1.0.0',
+        registeredConsents: purposesToInsert,
+      },
     });
 
     return this.response(mapped);

@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Patch, Post } from '@nestjs/common';
-import { IsEmail, IsEnum, IsString, MinLength } from 'class-validator';
+import { IsArray, IsBoolean, IsEmail, IsEnum, IsOptional, IsString, MinLength } from 'class-validator';
 import { AuthUser, CurrentUser, Public, UserRole } from '../common/auth';
 import { AuthService } from './auth.service';
 
@@ -8,6 +8,9 @@ class RegisterDto {
   @IsEmail() email: string;
   @IsString() @MinLength(8) password: string;
   @IsEnum(UserRole) role: UserRole;
+  @IsBoolean() acceptedTerms: boolean;
+  @IsOptional() @IsString() termsVersion?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) profileConsents?: string[];
 }
 class LoginDto {
   @IsEmail() email: string;
