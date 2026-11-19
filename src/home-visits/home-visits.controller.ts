@@ -340,7 +340,7 @@ export class HomeVisitsController {
         status: 'SCHEDULED',
       })
       .eq('id', visitId)
-      .in('status', ['REQUESTED', 'TRIAGED'])
+      .in('status', ['REQUESTED', 'TRIAGED', 'SCHEDULED'])
       .in('patient_id', group.patientIds)
       .select()
       .maybeSingle();
@@ -386,6 +386,7 @@ export class HomeVisitsController {
       .update(updatePayload)
       .eq('id', visitId)
       .eq('assigned_caregiver_id', assignedCaregiverId)
+      .in('status', ['SCHEDULED', 'IN_PROGRESS'])
       .select()
       .maybeSingle();
 

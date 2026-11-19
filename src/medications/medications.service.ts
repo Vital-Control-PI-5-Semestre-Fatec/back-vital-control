@@ -341,6 +341,22 @@ export class MedicationsService {
       performed_by_user_id: user.userId,
     });
 
+    void this.audit.record({
+      actorUserId: user.userId,
+      action: 'STOCK_ADJUSTED',
+      resourceType: 'STOCK_MOVEMENT',
+      resourceId: medicationId,
+      patientId,
+      metadata: {
+        type: input.type,
+        direction: incoming ? 'IN' : 'OUT',
+        quantity: input.quantity,
+        stockBefore: before,
+        stockAfter: after,
+        reason: input.reason ?? null,
+      },
+    });
+
     return mapMedication(updatedRow);
   }
 

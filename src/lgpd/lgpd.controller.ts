@@ -1,18 +1,40 @@
-import { Body, Controller, Get, HttpStatus, Post, Res, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, HttpStatus, Param, Patch, Post, Res, UseGuards } from '@nestjs/common';
+import { IsBoolean, IsIn, IsOptional, IsString } from 'class-validator';
 import type { Response } from 'express';
-import { AuthGuard, AuthUser, CurrentUser, Public } from '../common/auth';
+import { AuthGuard, AuthUser, CurrentUser, Public, Roles, UserRole } from '../common/auth';
 import { LgpdService, PrivacyPolicyDoc } from './lgpd.service';
 import { LgpdDataRequest, UserConsent } from '../database/schemas';
 
 class SaveConsentDto {
-  purpose: string;
-  consented: boolean;
+  @IsString()
+  purpose!: string;
+
+  @IsBoolean()
+  consented!: boolean;
+
+  @IsOptional()
+  @IsString()
   version?: string;
 }
 
 class CreateDataRequestDto {
-  requestType: 'ACCESS_EXPORT' | 'CORRECTION' | 'DELETION';
+  @IsString()
+  @IsIn(['ACCESS_EXPORT', 'CORRECTION', 'DELETION'])
+  requestType!: 'ACCESS_EXPORT' | 'CORRECTION' | 'DELETION';
+
+  @IsOptional()
+  @IsString()
   details?: string;
+}
+
+class UpdateDataRequestDto {
+  @IsString()
+  @IsIn(['PENDING', 'IN_REVIEW', 'COMPLETED', 'REJECTED'])
+  status!: 'PENDING' | 'IN_REVIEW' | 'COMPLETED' | 'REJECTED';
+
+  @IsOptional()
+  @IsString()
+  responseNotes?: string;
 }
 
 @Controller('lgpd')
@@ -66,6 +88,27 @@ export class LgpdController {
   @Get('requests/my')
   async listMyDataRequests(@CurrentUser() user: AuthUser): Promise<LgpdDataRequest[]> {
     return this.lgpdService.listDataRequests(user.userId);
+  }
+
+  /**
+   * RF02/RF13: Gestor/DPO consulta todas as solicitações de titulares para atendimento.
+   */
+  @Roles(UserRole.CARE_MANAGER)
+  @Get('requests')
+  async listAllDataRequests(): Promise<LgpdDataRequest[]> {
+    return this.lgpdService.listAllDataRequests();
+  }
+
+  /**
+   * RF02/RF13: Gestor/DPO responde ou altera status da solicitação do titular.
+   */
+  @Roles(UserRole.CARE_MANAGER)
+  @Patch('requests/:id/status')
+  async updateDataRequest(
+    @Param('id') id: string,
+    @Body() dto: UpdateDataRequestDto,
+  ): Promise<LgpdDataRequest> {
+    return this.lgpdService.updateDataRequest(id, dto.status, dto.responseNotes);
   }
 
   /**

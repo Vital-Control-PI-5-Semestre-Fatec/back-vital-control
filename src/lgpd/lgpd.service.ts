@@ -230,6 +230,48 @@ export class LgpdService {
   }
 
   /**
+   * RF02/RF13: Listar todas as solicitações para a gestão do DPO / Gestor.
+   */
+  async listAllDataRequests(): Promise<LgpdDataRequest[]> {
+    const { data, error } = await this.supabase.client
+      .from('lgpd_data_requests')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error || !data) {
+      return [];
+    }
+    return data.map(mapLgpdDataRequest);
+  }
+
+  /**
+   * RF02/RF13: Atualizar status e parecer da solicitação do titular.
+   */
+  async updateDataRequest(
+    requestId: string,
+    status: 'PENDING' | 'IN_REVIEW' | 'COMPLETED' | 'REJECTED',
+    responseNotes?: string,
+  ): Promise<LgpdDataRequest> {
+    const updatePayload: Record<string, unknown> = { status };
+    if (responseNotes !== undefined) {
+      updatePayload.response_notes = responseNotes;
+    }
+
+    const { data, error } = await this.supabase.client
+      .from('lgpd_data_requests')
+      .update(updatePayload)
+      .eq('id', requestId)
+      .select()
+      .single();
+
+    if (error || !data) {
+      throw new BadRequestException(error?.message ?? 'Solicitação não encontrada');
+    }
+
+    return mapLgpdDataRequest(data);
+  }
+
+  /**
    * RF02: Exportação imediata do dossiê do titular (Direito de Acesso e Portabilidade - Art. 18, II e V da LGPD).
    */
   async exportMyData(
@@ -276,6 +318,23 @@ export class LgpdService {
     // 7. Solicitações LGPD registradas
     const requests = await this.listDataRequests(userId);
 
+    // 8. Trilha de auditoria relacionada ao titular
+    let auditRows: Array<Record<string, unknown>> = [];
+    try {
+      const auditQuery = this.supabase.client
+        .from('audit_logs')
+        .select('*');
+      const filtered = typeof (auditQuery as any).or === 'function'
+        ? (auditQuery as any).or(`actor_user_id.eq.${userId},patient_id.eq.${userId}`)
+        : (auditQuery as any).eq('actor_user_id', userId);
+      const { data } = await filtered.order('occurred_at', { ascending: false }).limit(50);
+      if (data && Array.isArray(data)) {
+        auditRows = data;
+      }
+    } catch {
+      // Graceful fallback para testes e ambientes sem tabela audit_logs carregada
+    }
+
     // Trilha de auditoria (RF08)
     void this.audit.record({
       actorUserId: userId,
@@ -299,6 +358,7 @@ export class LgpdService {
       recentAdministrations: administrations ?? [],
       consentsHistory: consents,
       dataSubjectRequests: requests,
+      auditLogs: auditRows ?? [],
     };
   }
 
@@ -314,6 +374,7 @@ export class LgpdService {
     const admins = (dossier.recentAdministrations as Array<Record<string, unknown>>) || [];
     const consents = (dossier.consentsHistory as UserConsent[]) || [];
     const requests = (dossier.dataSubjectRequests as LgpdDataRequest[]) || [];
+    const logs = (dossier.auditLogs as Array<Record<string, unknown>>) || [];
 
     const lines: string[] = [];
     lines.push('\uFEFF'); // BOM para suporte a caracteres acentuados no Excel
@@ -347,23 +408,28 @@ export class LgpdService {
     lines.push('');
 
     lines.push('--- MEDICAMENTOS CADASTRADOS ---');
-    lines.push('Nome do Medicamento;Dosagem;Instruções;Observações');
+    lines.push('Nome do Medicamento;Dosagem;Marca;Observações');
     if (meds.length === 0) {
       lines.push('Nenhum medicamento registrado;;;');
     } else {
       for (const m of meds) {
-        lines.push(`"${String(m.name ?? '')}";"${String(m.dosage_description ?? m.dosage ?? '')}";"${String(m.instructions ?? '')}";"${String(m.notes ?? '')}"`);
+        lines.push(`"${String(m.name ?? '')}";"${String(m.dosage_description ?? m.dosageDescription ?? m.dosage ?? '')}";"${String(m.brand ?? '')}";"${String(m.notes ?? '')}"`);
       }
     }
     lines.push('');
 
     lines.push('--- AGENDAMENTOS E ROTINAS ---');
-    lines.push('Medicamento ID;Horário Previsto;Dose;Instruções');
+    lines.push('Medicamento ID;Horários;Dose;Instruções');
     if (scheds.length === 0) {
       lines.push('Nenhum agendamento registrado;;;');
     } else {
       for (const s of scheds) {
-        lines.push(`"${String(s.medication_id ?? '')}";"${String(s.scheduled_time ?? s.time ?? '')}";"${String(s.dosage ?? '')}";"${String(s.instructions ?? '')}"`);
+        const timesStr = Array.isArray(s.times) ? s.times.join(', ') : String(s.times ?? s.scheduled_time ?? s.time ?? '');
+        const doseObj = s.dose as { quantity?: number; unit?: string } | undefined;
+        const doseStr = doseObj && typeof doseObj === 'object' && doseObj.quantity !== undefined
+          ? `${doseObj.quantity} ${doseObj.unit ?? ''}`.trim()
+          : String(s.dosage ?? '');
+        lines.push(`"${String(s.medication_id ?? s.medicationId ?? '')}";"${timesStr}";"${doseStr}";"${String(s.instructions ?? '')}"`);
       }
     }
     lines.push('');
@@ -374,7 +440,7 @@ export class LgpdService {
       lines.push('Nenhuma administração registrada;;;;');
     } else {
       for (const a of admins) {
-        lines.push(`"${String(a.schedule_id ?? '')}";"${String(a.scheduled_for ?? '')}";"${String(a.administered_at ?? '')}";"${String(a.status ?? '')}";"${String(a.administered_by ?? '')}"`);
+        lines.push(`"${String(a.schedule_id ?? a.scheduleId ?? '')}";"${String(a.scheduled_for ?? a.scheduledFor ?? '')}";"${String(a.completed_at ?? a.completedAt ?? a.administered_at ?? '')}";"${String(a.status ?? '')}";"${String(a.performed_by_user_id ?? a.performedByUserId ?? a.administered_by ?? '')}"`);
       }
     }
     lines.push('');
@@ -399,6 +465,18 @@ export class LgpdService {
         lines.push(`"${r.id ?? ''}";"${r.requestType}";"${r.status}";"${(r.details ?? '').replace(/"/g, '""')}";"${r.createdAt ?? ''}";"${r.updatedAt ?? 'Em andamento'}"`);
       }
     }
+    lines.push('');
+
+    lines.push('--- TRILHA DE AUDITORIA DO TITULAR (ART. 6º, X) ---');
+    lines.push('Ação;Recurso;Data e Hora;Metadados');
+    if (logs.length === 0) {
+      lines.push('Nenhum log registrado;;;');
+    } else {
+      for (const log of logs) {
+        const metaStr = log.metadata ? JSON.stringify(log.metadata).replace(/"/g, '""') : '';
+        lines.push(`"${String(log.action ?? '')}";"${String(log.resource_type ?? '')}";"${String(log.occurred_at ?? '')}";"${metaStr}"`);
+      }
+    }
 
     return lines.join('\r\n');
   }
@@ -411,8 +489,11 @@ export class LgpdService {
     const u = dossier.user as User | null;
     const p = dossier.clinicalProfile as PatientProfile | null;
     const meds = (dossier.medications as Array<Record<string, unknown>>) || [];
+    const scheds = (dossier.medicationSchedules as Array<Record<string, unknown>>) || [];
+    const admins = (dossier.recentAdministrations as Array<Record<string, unknown>>) || [];
     const consents = (dossier.consentsHistory as UserConsent[]) || [];
     const requests = (dossier.dataSubjectRequests as LgpdDataRequest[]) || [];
+    const logs = (dossier.auditLogs as Array<Record<string, unknown>>) || [];
 
     return new Promise<Buffer>((resolve, reject) => {
       try {
@@ -480,22 +561,49 @@ export class LgpdService {
             : 'N/D';
         addField('Contatos de Emergência', emergencyContactsStr);
 
-        // 3. Medicamentos Cadastrados
-        addSectionHeader('3. Medicamentos em Uso');
+        // 3. Medicamentos Cadastrados e Rotinas
+        addSectionHeader('3. Medicamentos e Rotinas Agendadas');
         if (meds.length === 0) {
           doc.fillColor(mutedColor).fontSize(9).font('Helvetica-Oblique').text('Nenhum medicamento registrado para este paciente.');
         } else {
           meds.forEach((m, idx) => {
             doc.fillColor(darkColor).fontSize(9).font('Helvetica-Bold')
-               .text(`${idx + 1}. ${String(m.name ?? 'Medicamento')} - Dosagem: ${String(m.dosage_description ?? m.dosage ?? 'N/D')}`);
-            if (m.instructions) {
-              doc.fillColor(mutedColor).fontSize(8).font('Helvetica').text(`   Instruções: ${String(m.instructions)}`);
+               .text(`${idx + 1}. ${String(m.name ?? 'Medicamento')} - Dosagem: ${String(m.dosage_description ?? m.dosageDescription ?? m.dosage ?? 'N/D')}`);
+            if (m.notes) {
+              doc.fillColor(mutedColor).fontSize(8).font('Helvetica').text(`   Observações: ${String(m.notes)}`);
             }
           });
         }
 
-        // 4. Consentimentos LGPD (RF01)
-        addSectionHeader('4. Histórico de Consentimentos (Art. 8º da LGPD)');
+        if (scheds.length > 0) {
+          doc.moveDown(0.4);
+          doc.fillColor(primaryColor).fontSize(9).font('Helvetica-Bold').text('   Rotinas e Horários:');
+          scheds.forEach((s) => {
+            const timesStr = Array.isArray(s.times) ? s.times.join(', ') : String(s.times ?? s.scheduled_time ?? s.time ?? 'N/D');
+            const doseObj = s.dose as { quantity?: number; unit?: string } | undefined;
+            const doseStr = doseObj && typeof doseObj === 'object' && doseObj.quantity !== undefined
+              ? `${doseObj.quantity} ${doseObj.unit ?? ''}`.trim()
+              : String(s.dosage ?? '');
+            doc.fillColor(darkColor).fontSize(8).font('Helvetica')
+               .text(`   • ${String(s.title ?? 'Rotina')}: ${doseStr} nos horários [${timesStr}]`);
+          });
+        }
+
+        // 4. Histórico de Administrações
+        addSectionHeader('4. Administrações Recentes de Medicamentos');
+        if (admins.length === 0) {
+          doc.fillColor(mutedColor).fontSize(9).font('Helvetica-Oblique').text('Nenhum registro de administração recente.');
+        } else {
+          admins.slice(0, 15).forEach((a) => {
+            const dateStr = a.scheduled_for ? new Date(String(a.scheduled_for)).toLocaleString('pt-BR') : 'N/D';
+            const statusStr = String(a.status ?? 'PENDING');
+            doc.fillColor(darkColor).fontSize(8).font('Helvetica')
+               .text(`• Previsto: ${dateStr} | Status: ${statusStr}`);
+          });
+        }
+
+        // 5. Consentimentos LGPD (RF01)
+        addSectionHeader('5. Histórico de Consentimentos (Art. 8º da LGPD)');
         if (consents.length === 0) {
           doc.fillColor(mutedColor).fontSize(9).font('Helvetica-Oblique').text('Nenhum consentimento específico registrado.');
         } else {
@@ -508,8 +616,8 @@ export class LgpdService {
           });
         }
 
-        // 5. Solicitações de Titular (RF02)
-        addSectionHeader('5. Protocolos e Solicitações do Titular (Art. 18 da LGPD)');
+        // 6. Solicitações de Titular (RF02)
+        addSectionHeader('6. Protocolos e Solicitações do Titular (Art. 18 da LGPD)');
         if (requests.length === 0) {
           doc.fillColor(mutedColor).fontSize(9).font('Helvetica-Oblique').text('Nenhuma solicitação formal registrada pelo titular.');
         } else {
@@ -520,6 +628,16 @@ export class LgpdService {
             if (r.details) {
               doc.fillColor(mutedColor).fontSize(8).font('Helvetica').text(`   Detalhes: ${r.details}`);
             }
+          });
+        }
+
+        // 7. Trilha de Auditoria do Titular
+        if (logs.length > 0) {
+          addSectionHeader('7. Trilha de Auditoria do Titular (Art. 6º, X)');
+          logs.slice(0, 10).forEach((l) => {
+            const logDate = l.occurred_at ? new Date(String(l.occurred_at)).toLocaleString('pt-BR') : 'N/D';
+            doc.fillColor(darkColor).fontSize(8).font('Helvetica')
+               .text(`• ${logDate} - Ação: ${String(l.action ?? '')} (${String(l.resource_type ?? '')})`);
           });
         }
 

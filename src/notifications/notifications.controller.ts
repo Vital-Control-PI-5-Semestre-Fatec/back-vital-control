@@ -49,15 +49,21 @@ export class NotificationsController {
     return mapNotificationDevice(data);
   }
 
-  @Delete(':pushToken')
-  async disable(@Param('pushToken') pushToken: string, @CurrentUser() user: AuthUser) {
-    const { data } = await this.supabase.client
+  @Delete(':tokenOrId')
+  async disable(@Param('tokenOrId') tokenOrId: string, @CurrentUser() user: AuthUser) {
+    const isUuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(tokenOrId);
+    let query = this.supabase.client
       .from('notification_devices')
       .update({ active: false })
-      .eq('push_token', pushToken)
-      .eq('user_id', user.userId)
-      .select()
-      .maybeSingle();
+      .eq('user_id', user.userId);
+
+    if (isUuid) {
+      query = query.or(`id.eq.${tokenOrId},push_token.eq.${tokenOrId}`);
+    } else {
+      query = query.eq('push_token', tokenOrId);
+    }
+
+    const { data } = await query.select().maybeSingle();
 
     return data ? mapNotificationDevice(data) : null;
   }
